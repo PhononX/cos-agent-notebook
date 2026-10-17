@@ -1,9 +1,11 @@
 // What the domain layer needs from the outside world. Local implementations live in
-// src/adapters/local; a hosted deployment provides its own. Every call names the notebook.
+// src/adapters/local; a hosted deployment provides its own. Every call names the notebook, and
+// the notebook names its space (personal or workspace), so an implementation can keep spaces
+// apart: separate storage, keys, retention and deletion.
 
-export type NotebookId = string
+import type { NotebookRef } from './notebook-ref.ts'
 
-export const NOTEBOOK_ID = /^[a-z0-9][a-z0-9_-]{0,62}$/
+export type { NotebookRef }
 
 export interface FileWrite {
   path: string
@@ -13,14 +15,14 @@ export interface FileWrite {
 
 /** The notebook's Markdown files. */
 export interface NotebookStore {
-  exists(notebook: NotebookId): Promise<boolean>
+  exists(notebook: NotebookRef): Promise<boolean>
   /** Makes an empty notebook. */
-  create(notebook: NotebookId): Promise<void>
+  create(notebook: NotebookRef): Promise<void>
   /** Every note's path, relative to the notebook, with `/`. Hidden folders are left out. */
-  list(notebook: NotebookId): Promise<string[]>
-  read(notebook: NotebookId, path: string): Promise<string | null>
+  list(notebook: NotebookRef): Promise<string[]>
+  read(notebook: NotebookRef, path: string): Promise<string | null>
   /** Writes each file atomically (all of a batch, or the caller restores what was written). */
-  write(notebook: NotebookId, files: readonly FileWrite[]): Promise<void>
+  write(notebook: NotebookRef, files: readonly FileWrite[]): Promise<void>
 }
 
 export interface Author {
@@ -45,16 +47,16 @@ export interface ChangeRecord {
 
 /** The notebook's history: one entry per change. */
 export interface History {
-  init(notebook: NotebookId): Promise<void>
+  init(notebook: NotebookRef): Promise<void>
   /** Records the given paths as they are now in the store, as one change. */
   commit(
-    notebook: NotebookId,
+    notebook: NotebookRef,
     change: { changeId: string; summary: string; author: Author; paths: readonly string[] },
   ): Promise<void>
-  findChange(notebook: NotebookId, changeId: string): Promise<ChangeRecord | null>
+  findChange(notebook: NotebookRef, changeId: string): Promise<ChangeRecord | null>
   /** Earlier versions of the files changed by the most recent changes, newest first. */
   recentVersions(
-    notebook: NotebookId,
+    notebook: NotebookRef,
     changes: number,
   ): Promise<{ path: string; content: string }[]>
   /** Three-way merge of one file's text: the change from `base` to `theirs`, applied to `ours`. */
@@ -63,7 +65,7 @@ export interface History {
 
 /** Serializes writes to one notebook. */
 export interface Lock {
-  run<T>(notebook: NotebookId, fn: () => Promise<T>): Promise<T>
+  run<T>(notebook: NotebookRef, fn: () => Promise<T>): Promise<T>
 }
 
 export interface IdempotencyRecord {
@@ -74,8 +76,8 @@ export interface IdempotencyRecord {
 }
 
 export interface IdempotencyStore {
-  get(notebook: NotebookId, key: string): Promise<IdempotencyRecord | null>
-  put(notebook: NotebookId, key: string, record: IdempotencyRecord): Promise<void>
+  get(notebook: NotebookRef, key: string): Promise<IdempotencyRecord | null>
+  put(notebook: NotebookRef, key: string, record: IdempotencyRecord): Promise<void>
 }
 
 export interface Clock {

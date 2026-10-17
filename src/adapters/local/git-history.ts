@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Author, ChangeRecord, History, NotebookId } from '../../domain/ports.ts'
+import type { Author, ChangeRecord, History, NotebookRef } from '../../domain/ports.ts'
 import type { DirFor } from './fs-store.ts'
 import { STATE_DIR } from './file-idempotency.ts'
 
@@ -74,7 +74,7 @@ export class GitHistory implements History {
     this.dirFor = dirFor
   }
 
-  async init(notebook: NotebookId): Promise<void> {
+  async init(notebook: NotebookRef): Promise<void> {
     const dir = this.dirFor(notebook)
     await git(['init', '-q', '-b', 'main'], { cwd: dir })
     // The service's own state never goes into history.
@@ -83,7 +83,7 @@ export class GitHistory implements History {
   }
 
   async commit(
-    notebook: NotebookId,
+    notebook: NotebookRef,
     change: { changeId: string; summary: string; author: Author; paths: readonly string[] },
   ): Promise<void> {
     const cwd = this.dirFor(notebook)
@@ -113,7 +113,7 @@ export class GitHistory implements History {
     )
   }
 
-  async findChange(notebook: NotebookId, changeId: string): Promise<ChangeRecord | null> {
+  async findChange(notebook: NotebookRef, changeId: string): Promise<ChangeRecord | null> {
     const cwd = this.dirFor(notebook)
     if (!/^ch_[0-9a-z]{8}$/.test(changeId)) return null
     const found = await git(
@@ -155,7 +155,7 @@ export class GitHistory implements History {
   }
 
   async recentVersions(
-    notebook: NotebookId,
+    notebook: NotebookRef,
     changes: number,
   ): Promise<{ path: string; content: string }[]> {
     const cwd = this.dirFor(notebook)

@@ -4,6 +4,16 @@
 export { NotebookService } from './domain/service.ts'
 export type { ApplyChangesResult, UndoResult, CompactItem, ServiceDeps } from './domain/service.ts'
 export type * from './domain/ports.ts'
+export {
+  checkRef,
+  formatRef,
+  notebookKey,
+  parseRef,
+  personalNotebook,
+  workspaceNotebook,
+  type NotebookRef,
+  type Space,
+} from './domain/notebook-ref.ts'
 export type { Actor } from './domain/actor.ts'
 export { NotebookError, type ErrorCode } from './domain/errors.ts'
 export { ApplyChangesRequest, Operation } from './domain/request.ts'

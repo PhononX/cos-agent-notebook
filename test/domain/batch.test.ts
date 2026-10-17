@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import type { MemoryStore } from '../../src/adapters/memory/index.ts'
 import { itemId } from '../../src/format/ids.ts'
+import { personalNotebook } from '../../src/domain/notebook-ref.ts'
 import { fixtureNotes } from '../helpers/fixture.ts'
 import { refusal } from '../helpers/refusal.ts'
 import { AGENT, NB, TODAY, fixtureService } from '../helpers/service.ts'
@@ -13,10 +15,7 @@ const lineOf = (path: string, start: string) =>
     .find((l) => l.includes(start))!
 const idOf = (path: string, start: string) => itemId(path, lineOf(path, start), 0)
 
-async function snapshot(store: {
-  list(nb: string): Promise<string[]>
-  read(nb: string, p: string): Promise<string | null>
-}) {
+async function snapshot(store: MemoryStore) {
   const out = new Map<string, string | null>()
   for (const p of await store.list(NB)) out.set(p, await store.read(NB, p))
   return out
@@ -37,8 +36,8 @@ describe('apply_changes batches', () => {
       { op: 'note', type: 'person', name: 'Dana Whitfield', front_matter: { last_talked: TODAY } },
     ])
     assert.match(r.change_id!, /^ch_[0-9a-z]{8}$/)
-    assert.equal(history.commits.get(NB)!.length, 1)
-    const commit = history.commits.get(NB)![0]!
+    assert.equal(history.commitsOf(NB).length, 1)
+    const commit = history.commitsOf(NB)[0]!
     assert.equal(commit.author.name, 'claude-desktop for Alex')
     assert.equal(commit.summary, r.summary)
     assert.deepEqual(
@@ -71,7 +70,7 @@ describe('apply_changes batches', () => {
     )
     assert.equal(e.operation, 1)
     assert.deepEqual(await snapshot(store), before)
-    assert.equal(history.commits.get(NB)!.length, 0)
+    assert.equal(history.commitsOf(NB).length, 0)
   })
 
   it('puts files back when writing fails part way', async () => {
@@ -115,7 +114,7 @@ describe('apply_changes batches', () => {
     const second = await apply(ops, { idempotency_key: 'retry-key-0001' })
     assert.equal(second.replayed, true)
     assert.equal(second.change_id, first.change_id)
-    assert.equal(history.commits.get(NB)!.length, 1)
+    assert.equal(history.commitsOf(NB).length, 1)
     const e = await refusal(
       apply([{ op: 'add', kind: 'action', text: 'Something else' }], {
         idempotency_key: 'retry-key-0001',
@@ -185,7 +184,11 @@ describe('apply_changes batches', () => {
     assert.equal(
       (
         await refusal(
-          service.applyChanges('other', { operations: [{ op: 'log', text: 'x' }] }, AGENT),
+          service.applyChanges(
+            personalNotebook('someone-else'),
+            { operations: [{ op: 'log', text: 'x' }] },
+            AGENT,
+          ),
         )
       ).code,
       'not_a_notebook',
@@ -193,7 +196,11 @@ describe('apply_changes batches', () => {
     assert.equal(
       (
         await refusal(
-          service.applyChanges('../x', { operations: [{ op: 'log', text: 'x' }] }, AGENT),
+          service.applyChanges(
+            { space: { kind: 'personal', account: '../x' }, id: 'default' },
+            { operations: [{ op: 'log', text: 'x' }] },
+            AGENT,
+          ),
         )
       ).code,
       'invalid_request',
@@ -211,7 +218,7 @@ describe('undo', () => {
     const u = await service.undo(NB, r.change_id!, AGENT)
     assert.equal(await read('actions.md'), original.get('actions.md'))
     assert.equal(await read('ideas.md'), original.get('ideas.md'))
-    assert.equal(history.commits.get(NB)!.length, 2)
+    assert.equal(history.commitsOf(NB).length, 2)
     const log = await read(`log/${TODAY}.md`)
     assert.match(
       log,

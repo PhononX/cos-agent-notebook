@@ -3,7 +3,7 @@
 
 import { TextLines } from '../format/lines.ts'
 import { parseNote, type Item, type Note } from '../format/note.ts'
-import type { NotebookId, NotebookStore } from './ports.ts'
+import type { NotebookRef, NotebookStore } from './ports.ts'
 
 export interface FileChange {
   path: string
@@ -16,7 +16,7 @@ export class WorkingCopy {
   private readonly original = new Map<string, string | null>()
   private itemCache: Item[] | null = null
 
-  static async load(store: NotebookStore, notebook: NotebookId): Promise<WorkingCopy> {
+  static async load(store: NotebookStore, notebook: NotebookRef): Promise<WorkingCopy> {
     const copy = new WorkingCopy()
     const paths = await store.list(notebook)
     const texts = await Promise.all(paths.map((p) => store.read(notebook, p)))

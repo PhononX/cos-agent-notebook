@@ -53,7 +53,9 @@ change it when the design changes.
 
 | Term | Meaning |
 | --- | --- |
-| Notebook | One person's folder of Markdown files, plus its history. The unit of storage, access and deletion. |
+| Notebook | One person's folder of Markdown files, plus its history. The unit of storage, access and deletion. Every notebook lives in exactly one space. |
+| Space | Where a notebook lives and who controls it: a person's own (**personal**), or a **workspace**'s. See "Personal and workspace notebooks". |
+| Workspace | A team or company. It holds one work notebook for each member who uses one. |
 | Note | One Markdown file in a notebook. |
 | Item | One list line in a note (an action, a waiting item, a decision, a link…), with its fields. |
 | Field | An inline `[key:: value]` on an item, or a front-matter key on a note. |
@@ -96,6 +98,31 @@ Requirements:
   write returns the new id. A write that targets an id that no longer exists is refused with
   the item's current text, never applied to whatever line is there now.
 
+## Personal and workspace notebooks
+
+A person can have a personal notebook and, for each workspace they belong to, a work notebook
+in that workspace. Each one is a complete notebook in the same format, with its own history: a
+person with a job has two pictures of their world, kept apart.
+
+- **Naming.** A notebook is named by its space and its id: `personal:<account>:<id>` (the id is
+  usually `default`) or `workspace:<workspace>:<member>`. Each part is a lowercase id.
+- **Storage is segmented by space.** Each space's notebooks are stored apart: locally under
+  `personal/<account>/<id>/` and `workspaces/<workspace>/<id>/`. A deployment can put each
+  space on its own volume or bucket, encrypt each with its own key, and give each its own
+  retention, backup and deletion. Every interface below receives the notebook's space.
+- **The person controls their personal notebook.** Only they, and the clients they authorize,
+  can read or change it. No workspace token, admin or job ever reaches it.
+- **The workspace controls its work notebooks.** The member reads and writes theirs day to day.
+  Workspace admins set retention, and can export or delete a work notebook. A work notebook stays
+  with the workspace when the member leaves, and the member loses access to it.
+- **One notebook per call.** Every read and write names exactly one notebook. No operation reads
+  one notebook to write another, moves or copies items between them, or checks names across
+  them. A client with access to both (an agent working for a person at work) calls each
+  separately; deciding whether something is work or personal is the agent's judgment, made with
+  the person.
+- **Deletion follows control.** Deleting a workspace deletes its notebooks. Deleting a person's
+  account deletes their personal notebook; their work notebooks follow each workspace's policy.
+
 ## Architecture
 
 ```
@@ -136,8 +163,8 @@ Requirements:
   not GitHub; repositories live on the service's own storage. People never need to know it's
   there.
 - Use the system `git` binary. Plumbing commands are fine.
-- **Retention:** a scheduled job keeps every commit from the last N days (configurable, default
-  90) and collapses everything older into one starting commit:
+- **Retention:** a scheduled job keeps every commit from the last N days (configurable per
+  space, default 90) and collapses everything older into one starting commit:
   1. `git rev-list -1 --before=<cutoff> main`
   2. `git commit-tree <cutoff>^{tree}` → new parentless root
   3. `git rebase --onto <new-root> <cutoff> main --committer-date-is-author-date`
@@ -264,12 +291,13 @@ names, likely duplicates), and the change id.
 ### HTTP API
 
 JSON over HTTPS, versioned under `/v1`. The same operations as MCP (`apply_changes` is
-`POST /v1/notebooks/<id>/changes`), plus what the dashboard needs: list notes, read a note, the dashboard's data bundle, change feed. All write routes
+`POST /v1/notebooks/<ref>/changes`, where `<ref>` is the notebook's name such as
+`workspace:northwind:alex`), plus what the dashboard needs: list notes, read a note, the dashboard's data bundle, change feed. All write routes
 require `Content-Type: application/json`. Publish an OpenAPI description.
 
 ### Git endpoint
 
-Serve smart HTTP at `/git/<notebook>.git` (via `git http-backend`). Off unless enabled for a
+Serve smart HTTP at `/git/<ref>.git` (via `git http-backend`). Off unless enabled for a
 notebook. Read-only by default; push is a separate scope. A push is processed like any other
 write: changed lines are validated, tagged as the person's, merged line by line, and lines
 changed on both sides are flagged as conflicts in a review note. The server's copy is
@@ -277,7 +305,7 @@ authoritative.
 
 ### Export
 
-`GET /v1/notebooks/<id>/export` returns a zip of the Markdown files (no git metadata).
+`GET /v1/notebooks/<ref>/export` returns a zip of the Markdown files (no git metadata).
 
 ### Dashboard
 
@@ -293,7 +321,7 @@ Starting point: the notebook page in `PhononX/claude-plugins`
 A command-line client (`cos-notebook sync <url> <folder>`) that keeps a local folder current for
 Obsidian, offline use and fast agent reads:
 
-- Pull when the server reports a change (server-sent events from `/v1/notebooks/<id>/events`),
+- Pull when the server reports a change (server-sent events from `/v1/notebooks/<ref>/events`),
   or poll as a fallback.
 - Commit and push local edits after a short pause (default 5 seconds).
 - Fetch only the retention window (`--shallow-since`). When the server has rewritten history
@@ -312,7 +340,9 @@ Authentication is pluggable; the service ships two providers:
   protected resource metadata. Maps the token's subject to an account.
 
 On top of either, the service issues its own **notebook tokens**: opaque, one per client or
-device, stored hashed, scoped, revocable, and listed in the dashboard. Scopes:
+device and notebook, stored hashed, scoped, revocable, and listed in the dashboard. A token's
+scopes apply to its one notebook. A client that serves a person at work and at home holds one
+token for each notebook. Scopes:
 
 | Scope | Allows |
 | --- | --- |
@@ -321,7 +351,8 @@ device, stored hashed, scoped, revocable, and listed in the dashboard. Scopes:
 | `rules:write` | Changing `my-rules.md` |
 | `sections:<name>` | Limits reads to named sections, such as excluding `catch-up` and `people` |
 | `git:read`, `git:write` | Clone and push |
-| `admin` | Token management, retention, purge, delete |
+| `admin` | Token management, retention, purge, delete, for one notebook. On a personal notebook only the person holds it |
+| `workspace:admin` | Retention, export and delete for every work notebook in one workspace. Never valid for a personal notebook |
 
 ## Extension points for hosting
 
@@ -331,18 +362,18 @@ implementation in this repository.
 
 | Interface | Local implementation | What a hosted deployment provides |
 | --- | --- | --- |
-| `NotebookStore` | Folders on local disk | Per-tenant volumes or object storage |
-| `KeyProvider` | None (disk encryption is the OS's job) | Per-notebook keys from a KMS; deleting the key makes all copies unreadable |
+| `NotebookStore` | Folders on local disk, one tree per space | Per-space volumes or object storage: each person's personal space and each workspace apart |
+| `KeyProvider` | None (disk encryption is the OS's job) | Per-space or per-notebook keys from a KMS; deleting a key makes all copies of what it covers unreadable |
 | `AuthProvider` | Static token | OAuth with the hosted identity provider |
 | `Lock` | In-process mutex per notebook | Distributed lock, so several instances can serve one notebook safely |
-| `AccessLog` | Append-only file per notebook | Central store; shown to the person as "who read and changed what" |
-| `Entitlements` | Unlimited | Quotas (storage, clients, features) checked before writes; returns a clear "limit reached" error |
+| `AccessLog` | Append-only file per notebook | Central store; shown to the person as "who read and changed what", and for work notebooks to workspace admins |
+| `Entitlements` | Unlimited | Quotas (storage, clients, features) per space, checked before writes; returns a clear "limit reached" error |
 | `EventBus` | In-process | Cross-instance change notifications for the sync engine and dashboard |
 
 Hosting also needs these properties throughout the code:
 
-- **Every route, tool and job is scoped to a notebook id.** Local mode has one notebook,
-  `default`.
+- **Every route, tool and job is scoped to one notebook**, named by its space and id. Local
+  mode has one notebook, `personal:local:default`.
 - **Stateless processes.** All state lives behind `NotebookStore`, `Lock` and the derived
   indexes, so instances can be added or replaced.
 - **No content in logs.** Logs, errors and metrics carry ids, counts and timings, never note
@@ -392,7 +423,8 @@ Hosting also needs these properties throughout the code:
 3. **Dashboard.** Port the existing notebook page onto the HTTP API.
 4. **Search and review.** Filters, keyword search, review candidates, change feed.
 5. **Openness.** Export, git endpoint, sync engine, retention, purge.
-6. **Ready to host.** Multi-notebook routing, notebook tokens and scopes, OAuth resource-server
+6. **Ready to host.** Multi-notebook routing across personal and workspace spaces, the
+   `workspace:admin` scope, notebook tokens and scopes, OAuth resource-server
    mode, the extension-point interfaces, access log, no-content-in-logs test.
 7. **Semantic search** (optional module).
 
@@ -406,3 +438,7 @@ Each milestone ends with passing tests and an updated README section on how to r
 - Which local embedding model to use, and at what notebook size semantic search is worth
   enabling by default.
 - License: AGPL (prevents a closed hosted copy) or MIT/Apache (wider adoption).
+- Whether a member leaving a workspace may take an export of their work notebook (a workspace
+  setting?), and whether a person can move a personal notebook into a workspace or back.
+- Whether workspaces will later want shared notebooks written by a whole team. Today every
+  notebook is one person's.

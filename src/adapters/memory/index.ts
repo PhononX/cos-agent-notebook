@@ -8,29 +8,32 @@ import type {
   History,
   IdempotencyRecord,
   IdempotencyStore,
-  NotebookId,
+  NotebookRef,
   NotebookStore,
 } from '../../domain/ports.ts'
+import { notebookKey } from '../../domain/notebook-ref.ts'
 
 export class MemoryStore implements NotebookStore {
-  readonly notebooks = new Map<NotebookId, Map<string, string>>()
+  /** Each notebook's files, by notebookKey: spaces never share an entry. */
+  readonly notebooks = new Map<string, Map<string, string>>()
   /** When set, the next write fails after writing this many files (for rollback tests). */
   failAfter: number | null = null
 
-  async exists(notebook: NotebookId) {
-    return this.notebooks.has(notebook)
+  async exists(notebook: NotebookRef) {
+    return this.notebooks.has(notebookKey(notebook))
   }
-  async create(notebook: NotebookId) {
-    if (!this.notebooks.has(notebook)) this.notebooks.set(notebook, new Map())
+  async create(notebook: NotebookRef) {
+    if (!this.notebooks.has(notebookKey(notebook)))
+      this.notebooks.set(notebookKey(notebook), new Map())
   }
-  async list(notebook: NotebookId) {
-    return [...(this.notebooks.get(notebook)?.keys() ?? [])].sort()
+  async list(notebook: NotebookRef) {
+    return [...(this.notebooks.get(notebookKey(notebook))?.keys() ?? [])].sort()
   }
-  async read(notebook: NotebookId, path: string) {
-    return this.notebooks.get(notebook)?.get(path) ?? null
+  async read(notebook: NotebookRef, path: string) {
+    return this.notebooks.get(notebookKey(notebook))?.get(path) ?? null
   }
-  async write(notebook: NotebookId, files: readonly FileWrite[]) {
-    const nb = this.notebooks.get(notebook)
+  async write(notebook: NotebookRef, files: readonly FileWrite[]) {
+    const nb = this.notebooks.get(notebookKey(notebook))
     if (!nb) throw new Error('no such notebook')
     let n = 0
     for (const f of files) {
@@ -51,27 +54,35 @@ interface MemoryCommit extends ChangeRecord {
 
 /** History kept as snapshots. Its merge only handles the simple case where nothing else changed. */
 export class MemoryHistory implements History {
-  readonly commits = new Map<NotebookId, MemoryCommit[]>()
-  private readonly baseline = new Map<NotebookId, Map<string, string>>()
+  readonly commits = new Map<string, MemoryCommit[]>()
+  private readonly baseline = new Map<string, Map<string, string>>()
   private readonly store: MemoryStore
 
   constructor(store: MemoryStore) {
     this.store = store
   }
 
+  commitsOf(notebook: NotebookRef): ChangeRecord[] {
+    return this.commits.get(notebookKey(notebook)) ?? []
+  }
+
   /** Starts history from whatever the store holds now. */
-  async init(notebook: NotebookId) {
-    this.commits.set(notebook, [])
-    this.baseline.set(notebook, new Map(this.store.notebooks.get(notebook) ?? []))
+  async init(notebook: NotebookRef) {
+    this.commits.set(notebookKey(notebook), [])
+    this.baseline.set(
+      notebookKey(notebook),
+      new Map(this.store.notebooks.get(notebookKey(notebook)) ?? []),
+    )
   }
 
   async commit(
-    notebook: NotebookId,
+    notebook: NotebookRef,
     change: { changeId: string; summary: string; author: Author; paths: readonly string[] },
   ) {
-    const list = this.commits.get(notebook)!
-    const prev = list.at(-1)?.snapshot ?? this.baseline.get(notebook) ?? new Map<string, string>()
-    const snapshot = new Map(this.store.notebooks.get(notebook)!)
+    const list = this.commits.get(notebookKey(notebook))!
+    const prev =
+      list.at(-1)?.snapshot ?? this.baseline.get(notebookKey(notebook)) ?? new Map<string, string>()
+    const snapshot = new Map(this.store.notebooks.get(notebookKey(notebook))!)
     list.push({
       changeId: change.changeId,
       summary: change.summary,
@@ -86,15 +97,15 @@ export class MemoryHistory implements History {
     })
   }
 
-  async findChange(notebook: NotebookId, changeId: string) {
-    const c = this.commits.get(notebook)?.find((x) => x.changeId === changeId)
+  async findChange(notebook: NotebookRef, changeId: string) {
+    const c = this.commits.get(notebookKey(notebook))?.find((x) => x.changeId === changeId)
     if (!c) return null
     const { snapshot: _s, ...record } = c
     return record
   }
 
-  async recentVersions(notebook: NotebookId, changes: number) {
-    const list = this.commits.get(notebook) ?? []
+  async recentVersions(notebook: NotebookRef, changes: number) {
+    const list = this.commits.get(notebookKey(notebook)) ?? []
     const out: { path: string; content: string }[] = []
     for (const c of list.slice(-changes).reverse()) {
       for (const f of c.files) if (f.before !== null) out.push({ path: f.path, content: f.before })
@@ -114,10 +125,10 @@ export { InProcessLock as MemoryLock } from '../local/lock.ts'
 export class MemoryIdempotency implements IdempotencyStore {
   private readonly records = new Map<string, IdempotencyRecord>()
 
-  async get(notebook: NotebookId, key: string) {
-    return this.records.get(`${notebook}\n${key}`) ?? null
+  async get(notebook: NotebookRef, key: string) {
+    return this.records.get(`${notebookKey(notebook)}\n${key}`) ?? null
   }
-  async put(notebook: NotebookId, key: string, record: IdempotencyRecord) {
-    this.records.set(`${notebook}\n${key}`, record)
+  async put(notebook: NotebookRef, key: string, record: IdempotencyRecord) {
+    this.records.set(`${notebookKey(notebook)}\n${key}`, record)
   }
 }

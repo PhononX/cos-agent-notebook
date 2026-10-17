@@ -5,6 +5,7 @@ import {
   MemoryStore,
 } from '../../src/adapters/memory/index.ts'
 import type { Actor } from '../../src/domain/actor.ts'
+import { personalNotebook } from '../../src/domain/notebook-ref.ts'
 import type { LogFields, Logger } from '../../src/domain/ports.ts'
 import { NotebookService } from '../../src/domain/service.ts'
 import { fixtureNotes } from './fixture.ts'
@@ -12,7 +13,7 @@ import { fixtureNotes } from './fixture.ts'
 /** 10:05 on Saturday 2026-10-17 in New York, the fixture's time zone. */
 export const NOW = new Date('2026-10-17T14:05:00Z')
 export const TODAY = '2026-10-17'
-export const NB = 'default'
+export const NB = personalNotebook('alex')
 export const AGENT: Actor = { client: 'claude-desktop', person: 'Alex', source: 'cv' }
 
 export class CaptureLogger implements Logger {

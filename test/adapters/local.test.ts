@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { cp, readFile, symlink, writeFile } from 'node:fs/promises'
+import { cp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import {
@@ -9,6 +9,7 @@ import {
   localDirFor,
 } from '../../src/adapters/local/index.ts'
 import { LocalNotebookStore } from '../../src/adapters/local/fs-store.ts'
+import { personalNotebook, workspaceNotebook } from '../../src/domain/notebook-ref.ts'
 import { GitHistory } from '../../src/adapters/local/git-history.ts'
 import { FIXTURE, fixtureNotes } from '../helpers/fixture.ts'
 import { refusal } from '../helpers/refusal.ts'
@@ -231,5 +232,45 @@ describe('local store', () => {
     assert.deepEqual(await store.list(NB), ['outside.md', 'people/Dana Whitfield.md'])
     await assert.rejects(store.read(NB, '../secret.md'))
     await assert.rejects(store.write(NB, [{ path: '.git/config.md', content: 'x' }]))
+  })
+})
+
+describe('segmented local layout', () => {
+  it('keeps personal and workspace notebooks in separate folders, each with its own history', async () => {
+    const root = await tempDir()
+    const service = createLocalService({
+      root,
+      logger: new CaptureLogger(),
+      clock: { now: () => NOW },
+    })
+    const personal = personalNotebook('alex')
+    const work = workspaceNotebook('northwind', 'alex')
+    await service.init(personal, { actor: AGENT, timezone: 'UTC' })
+    await service.init(work, { actor: AGENT, timezone: 'UTC' })
+    await service.applyChanges(
+      work,
+      { operations: [{ op: 'add', kind: 'action', text: 'Ship SSO' }] },
+      AGENT,
+    )
+    const personalDir = join(root, 'personal', 'alex', 'default')
+    const workDir = join(root, 'workspaces', 'northwind', 'alex')
+    assert.match(await readFile(join(workDir, 'actions.md'), 'utf8'), /Ship SSO/)
+    assert.doesNotMatch(await readFile(join(personalDir, 'actions.md'), 'utf8'), /Ship SSO/)
+    assert.equal(git(workDir, 'rev-list', '--count', 'HEAD').trim(), '2')
+    assert.equal(git(personalDir, 'rev-list', '--count', 'HEAD').trim(), '1')
+    // Deleting the workspace's tree leaves the person's own notebook untouched.
+    await rm(join(root, 'workspaces'), { recursive: true })
+    const notes = await service.listItems(personal)
+    assert.ok(Array.isArray(notes))
+    assert.equal((await refusal(service.listItems(work))).code, 'not_a_notebook')
+  })
+
+  it('a one-folder service holds only the local notebook', async () => {
+    const dir = await tempDir()
+    const service = createLocalService({ dir, logger: new CaptureLogger() })
+    await assert.rejects(
+      service.init(workspaceNotebook('northwind', 'alex'), { actor: AGENT }),
+      /one notebook/,
+    )
   })
 })

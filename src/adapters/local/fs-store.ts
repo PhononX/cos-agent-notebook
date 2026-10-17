@@ -5,9 +5,9 @@ import { randomBytes } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { pathProblem } from '../../format/layout.ts'
-import type { FileWrite, NotebookId, NotebookStore } from '../../domain/ports.ts'
+import type { FileWrite, NotebookRef, NotebookStore } from '../../domain/ports.ts'
 
-export type DirFor = (notebook: NotebookId) => string
+export type DirFor = (notebook: NotebookRef) => string
 
 export class LocalNotebookStore implements NotebookStore {
   private readonly dirFor: DirFor
@@ -16,7 +16,7 @@ export class LocalNotebookStore implements NotebookStore {
     this.dirFor = dirFor
   }
 
-  async exists(notebook: NotebookId): Promise<boolean> {
+  async exists(notebook: NotebookRef): Promise<boolean> {
     try {
       return (await lstat(this.dirFor(notebook))).isDirectory()
     } catch {
@@ -24,11 +24,11 @@ export class LocalNotebookStore implements NotebookStore {
     }
   }
 
-  async create(notebook: NotebookId): Promise<void> {
+  async create(notebook: NotebookRef): Promise<void> {
     await mkdir(this.dirFor(notebook), { recursive: true })
   }
 
-  async list(notebook: NotebookId): Promise<string[]> {
+  async list(notebook: NotebookRef): Promise<string[]> {
     const root = this.dirFor(notebook)
     const out: string[] = []
     const walk = async (dir: string) => {
@@ -46,7 +46,7 @@ export class LocalNotebookStore implements NotebookStore {
     return out.sort()
   }
 
-  async read(notebook: NotebookId, path: string): Promise<string | null> {
+  async read(notebook: NotebookRef, path: string): Promise<string | null> {
     const full = this.resolve(notebook, path)
     try {
       if (!(await lstat(full)).isFile()) return null
@@ -57,7 +57,7 @@ export class LocalNotebookStore implements NotebookStore {
     }
   }
 
-  async write(notebook: NotebookId, files: readonly FileWrite[]): Promise<void> {
+  async write(notebook: NotebookRef, files: readonly FileWrite[]): Promise<void> {
     for (const f of files) {
       const full = this.resolve(notebook, f.path)
       if (f.content === null) {
@@ -77,7 +77,7 @@ export class LocalNotebookStore implements NotebookStore {
   }
 
   /** The file for a note path, refusing anything outside the notebook. */
-  private resolve(notebook: NotebookId, path: string): string {
+  private resolve(notebook: NotebookRef, path: string): string {
     const problem = pathProblem(path)
     if (problem) throw new Error(`Refused a path that ${problem}`)
     const root = resolve(this.dirFor(notebook))

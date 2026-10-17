@@ -18,9 +18,9 @@ import {
 } from './batch.ts'
 import { renderChecked } from './compose.ts'
 import { NotebookError } from './errors.ts'
+import { checkRef, formatRef } from './notebook-ref.ts'
 import { runOperation } from './operations.ts'
 import {
-  NOTEBOOK_ID,
   silentLogger,
   systemClock,
   type Clock,
@@ -28,7 +28,7 @@ import {
   type IdempotencyStore,
   type Lock,
   type Logger,
-  type NotebookId,
+  type NotebookRef,
   type NotebookStore,
 } from './ports.ts'
 import { parseRequest } from './request.ts'
@@ -106,10 +106,10 @@ export class NotebookService {
 
   /** Starts a notebook with the starter files and its first history entry. */
   async init(
-    notebook: NotebookId,
+    notebook: NotebookRef,
     opts: { actor: Actor; timezone?: string },
   ): Promise<{ change_id: string; files: string[] }> {
-    checkNotebookId(notebook)
+    checkRef(notebook)
     const actor = checkActor(opts.actor)
     const timezone = opts.timezone ?? this.defaultTimezone
     if (!isTimeZone(timezone)) {
@@ -154,15 +154,19 @@ export class NotebookService {
         actor,
         now,
       })
-      this.logger.info('notebook_init', { notebook, change_id: changeId, files: files.length })
+      this.logger.info('notebook_init', {
+        notebook: formatRef(notebook),
+        change_id: changeId,
+        files: files.length,
+      })
       return { change_id: changeId, files: files.map((f) => f.path) }
     })
   }
 
   // ---------- reads ----------
 
-  async readNote(notebook: NotebookId, path: string) {
-    checkNotebookId(notebook)
+  async readNote(notebook: NotebookRef, path: string) {
+    checkRef(notebook)
     const problem = pathProblem(path)
     if (problem) throw new NotebookError('invalid_value', `The path "${path}" ${problem}.`)
     await this.requireNotebook(notebook)
@@ -181,8 +185,8 @@ export class NotebookService {
     }
   }
 
-  async listItems(notebook: NotebookId, opts: { file?: string } = {}): Promise<CompactItem[]> {
-    checkNotebookId(notebook)
+  async listItems(notebook: NotebookRef, opts: { file?: string } = {}): Promise<CompactItem[]> {
+    checkRef(notebook)
     await this.requireNotebook(notebook)
     const copy = await WorkingCopy.load(this.store, notebook)
     return copy
@@ -192,8 +196,8 @@ export class NotebookService {
   }
 
   /** The notebook's time zone and today's date in it. */
-  async today(notebook: NotebookId): Promise<ZonedNow> {
-    checkNotebookId(notebook)
+  async today(notebook: NotebookRef): Promise<ZonedNow> {
+    checkRef(notebook)
     await this.requireNotebook(notebook)
     const copy = await WorkingCopy.load(this.store, notebook)
     return zonedNow(this.clock.now(), this.timezoneOf(copy).timezone)
@@ -202,12 +206,12 @@ export class NotebookService {
   // ---------- writes ----------
 
   async applyChanges(
-    notebook: NotebookId,
+    notebook: NotebookRef,
     input: unknown,
     actorIn: Actor,
   ): Promise<ApplyChangesResult> {
     const started = Date.now()
-    checkNotebookId(notebook)
+    checkRef(notebook)
     const actor = checkActor(actorIn)
     const req = parseRequest(input)
     const { idempotency_key: key, ...rest } = req
@@ -224,7 +228,7 @@ export class NotebookService {
                 'This idempotency_key was already used for a different request. Use a new key for a new request.',
               )
             }
-            this.logger.info('apply_changes_replayed', { notebook })
+            this.logger.info('apply_changes_replayed', { notebook: formatRef(notebook) })
             return { ...(prior.result as ApplyChangesResult), replayed: true }
           }
         }
@@ -287,7 +291,7 @@ export class NotebookService {
           await this.idempotency.put(notebook, key, { requestHash, result, at: Date.now() })
         }
         this.logger.info('apply_changes', {
-          notebook,
+          notebook: formatRef(notebook),
           operations: req.operations.length,
           files: files.length,
           change_id: changeId ?? undefined,
@@ -299,20 +303,23 @@ export class NotebookService {
     } catch (e) {
       if (e instanceof NotebookError) {
         this.logger.info('apply_changes_refused', {
-          notebook,
+          notebook: formatRef(notebook),
           code: e.code,
           operation: e.operation,
         })
       } else {
-        this.logger.error('apply_changes_failed', { notebook, error: errorName(e) })
+        this.logger.error('apply_changes_failed', {
+          notebook: formatRef(notebook),
+          error: errorName(e),
+        })
       }
       throw e
     }
   }
 
   /** Reverts one earlier change, as a new change, so history keeps both. */
-  async undo(notebook: NotebookId, changeId: string, actorIn: Actor): Promise<UndoResult> {
-    checkNotebookId(notebook)
+  async undo(notebook: NotebookRef, changeId: string, actorIn: Actor): Promise<UndoResult> {
+    checkRef(notebook)
     const actor = checkActor(actorIn)
     if (!CHANGE_ID.test(changeId)) {
       throw new NotebookError(
@@ -373,7 +380,7 @@ export class NotebookService {
       const summary = `Undid ${changeId} (${record.summary})`
       const files = await this.commit(notebook, copy, { changeId: newId, summary, actor, now })
       this.logger.info('undo', {
-        notebook,
+        notebook: formatRef(notebook),
         change_id: newId,
         undone: changeId,
         files: files.length,
@@ -384,11 +391,11 @@ export class NotebookService {
 
   // ---------- internals ----------
 
-  private async requireNotebook(notebook: NotebookId): Promise<void> {
+  private async requireNotebook(notebook: NotebookRef): Promise<void> {
     if (!(await this.store.exists(notebook))) {
       throw new NotebookError(
         'not_a_notebook',
-        `There is no notebook "${notebook}". Start one with cos-notebook init.`,
+        `There is no notebook ${formatRef(notebook)}. Start one with cos-notebook init.`,
       )
     }
   }
@@ -408,7 +415,7 @@ export class NotebookService {
 
   /** Adds the daily log line, writes every changed file, and records one history entry. */
   private async commit(
-    notebook: NotebookId,
+    notebook: NotebookRef,
     copy: WorkingCopy,
     c: { changeId: string; summary: string; actor: Actor; now: ZonedNow; logLine?: boolean },
   ): Promise<FileSummary[]> {
@@ -433,7 +440,10 @@ export class NotebookService {
           changed.map((f) => ({ path: f.path, content: f.before })),
         )
         .catch((restoreError: unknown) =>
-          this.logger.error('restore_failed', { notebook, error: errorName(restoreError) }),
+          this.logger.error('restore_failed', {
+            notebook: formatRef(notebook),
+            error: errorName(restoreError),
+          }),
         )
       throw e
     }
@@ -441,7 +451,7 @@ export class NotebookService {
   }
 
   private async findStale(
-    notebook: NotebookId,
+    notebook: NotebookRef,
     copy: WorkingCopy,
     id: string,
   ): Promise<StaleItem | null> {
@@ -520,15 +530,6 @@ export function compactItem(item: Item): CompactItem {
     done: item.checked,
     fields,
     links: item.links,
-  }
-}
-
-function checkNotebookId(notebook: string): void {
-  if (typeof notebook !== 'string' || !NOTEBOOK_ID.test(notebook)) {
-    throw new NotebookError(
-      'invalid_request',
-      'A notebook id is 1 to 63 lowercase letters, digits, - or _.',
-    )
   }
 }
 

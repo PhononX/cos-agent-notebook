@@ -16,7 +16,9 @@ format contract (versioned); `docs/operations.md` documents `apply_changes`.
 - `src/format/`: pure format code (no I/O). `src/domain/`: all logic, behind `NotebookService`.
   `src/adapters/local|memory/`: implementations of `src/domain/ports.ts`. `src/cli/`: the command.
 - The domain layer imports no HTTP, MCP or git code; adapters stay thin.
-- Every call is scoped to a notebook id; local mode uses `default`.
+- Every call names one notebook as a `NotebookRef` (its space, personal or workspace, and its
+  id); local mode uses `personal:local:default`. Spaces are stored apart; never read one
+  notebook to write another.
 - TypeScript runs directly under Node (type stripping): import with `.ts` extensions, no enums,
   no parameter properties, no namespaces (`erasableSyntaxOnly`).
 - Errors are `NotebookError` with a code and a message that says how to fix the problem.

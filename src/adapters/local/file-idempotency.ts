@@ -4,7 +4,7 @@
 import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { IdempotencyRecord, IdempotencyStore, NotebookId } from '../../domain/ports.ts'
+import type { IdempotencyRecord, IdempotencyStore, NotebookRef } from '../../domain/ports.ts'
 import type { DirFor } from './fs-store.ts'
 
 const TTL_MS = 24 * 60 * 60 * 1000
@@ -17,11 +17,11 @@ export class FileIdempotencyStore implements IdempotencyStore {
     this.dirFor = dirFor
   }
 
-  async get(notebook: NotebookId, key: string): Promise<IdempotencyRecord | null> {
+  async get(notebook: NotebookRef, key: string): Promise<IdempotencyRecord | null> {
     return (await this.load(notebook))[key] ?? null
   }
 
-  async put(notebook: NotebookId, key: string, record: IdempotencyRecord): Promise<void> {
+  async put(notebook: NotebookRef, key: string, record: IdempotencyRecord): Promise<void> {
     const all = await this.load(notebook)
     const now = Date.now()
     for (const [k, r] of Object.entries(all)) if (now - r.at > TTL_MS) delete all[k]
@@ -33,7 +33,7 @@ export class FileIdempotencyStore implements IdempotencyStore {
     await rename(tmp, join(dir, 'idempotency.json'))
   }
 
-  private async load(notebook: NotebookId): Promise<Record<string, IdempotencyRecord>> {
+  private async load(notebook: NotebookRef): Promise<Record<string, IdempotencyRecord>> {
     try {
       return JSON.parse(
         await readFile(join(this.dirFor(notebook), STATE_DIR, 'idempotency.json'), 'utf8'),

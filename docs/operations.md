@@ -1,7 +1,10 @@
 # apply_changes operations
 
-`apply_changes` is the main write. It takes a list of operations and applies them as one change:
-all of them or none, one history entry, one line in the daily log. This page is the reference for
+`apply_changes` is the main write. It takes a list of operations and applies them as one change
+to one notebook: all of them or none, one history entry, one line in the daily log. The notebook
+is named by its space and id (`personal:alex:default`, `workspace:northwind:alex`); a call never
+touches any other notebook, so ids, change ids, names and idempotency keys belong to the
+notebook they came from. This page is the reference for
 the domain layer (`NotebookService.applyChanges`); the MCP tool and HTTP route in milestone 2 take
 the same JSON.
 

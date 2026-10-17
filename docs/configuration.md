@@ -12,6 +12,20 @@ configuration file comes with the local service in milestone 2.
 The notebook's own settings (`timezone`, `stale_days`, `nudges_per_day`, `meeting_prep`) live in
 the front matter of its `my-rules.md`; see `docs/notebook-format.md`.
 
+## Where notebooks live on disk
+
+`cos-notebook init` and `COS_NOTEBOOK_DIR` give one folder for one notebook,
+`personal:local:default`. Code that serves several notebooks passes a `root` instead
+(`createLocalService({ root })`), and each space gets its own folder tree:
+
+```
+<root>/personal/<account>/<id>/        a person's own notebooks (usually id "default")
+<root>/workspaces/<workspace>/<member>/ a workspace's work notebooks, one per member
+```
+
+Each notebook folder is a complete notebook with its own git history, so a space can be backed
+up, moved or deleted without touching another.
+
 ## Files the service keeps in a notebook folder
 
 | Path | What it is |

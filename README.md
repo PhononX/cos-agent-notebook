@@ -26,6 +26,8 @@ Milestone 1 of 7 (format and domain core) is done:
   formatted lines out; atomic batches; dry run; idempotency keys; duplicate and close-name checks;
   provenance; one git commit per change; a daily log line per change; the notebook's time zone.
 - `undo` of any earlier change, as a new change.
+- Personal and workspace notebooks: every call names one notebook by its space, and each space
+  is stored apart (see "Personal and workspace notebooks" in `SPEC.md`).
 - `cos-notebook init`.
 
 The HTTP API, MCP tools and the rest of the CLI arrive in milestone 2; see the milestones in
@@ -67,6 +69,17 @@ const result = await notebook.applyChanges(
 // result.change_id, result.results[i].items[j].id, …
 
 await notebook.undo(LOCAL_NOTEBOOK, result.change_id!, actor)
+```
+
+With `root` instead of `dir`, one service holds many notebooks, each space in its own folder
+tree (`<root>/personal/<account>/<id>/`, `<root>/workspaces/<workspace>/<id>/`):
+
+```ts
+import { createLocalService, personalNotebook, workspaceNotebook } from 'cos-agent-notebook'
+
+const service = createLocalService({ root: '/srv/notebooks' })
+await service.init(personalNotebook('alex'), { actor })
+await service.init(workspaceNotebook('northwind', 'alex'), { actor })
 ```
 
 ## Development
