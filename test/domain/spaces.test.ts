@@ -485,3 +485,33 @@ describe('the same person across spaces', () => {
     assert.match(e.message, /at most 20/)
   })
 })
+
+describe('unified reads', () => {
+  it('list items from several notebooks as one view, each labelled with its notebook', async () => {
+    const { service } = await twoNotebooks()
+    await service.applyChanges(
+      work,
+      { operations: [{ op: 'add', kind: 'action', text: 'Ship SSO' }] },
+      AGENT,
+    )
+    await service.applyChanges(
+      personal,
+      { operations: [{ op: 'add', kind: 'action', text: 'Book the dentist' }] },
+      AGENT,
+    )
+    const all = (await service.listItems([personal, work], { file: 'actions.md' })).filter(
+      (i) => i.done === false,
+    )
+    assert.deepEqual(
+      all.map((i) => [i.notebook, i.text]),
+      [
+        ['personal:alex:default', 'Book the dentist'],
+        ['workspace:northwind:alex', 'Ship SSO'],
+      ],
+    )
+    // Narrowed to one notebook, only its items.
+    const workOnly = await service.listItems([work], { file: 'actions.md' })
+    assert.ok(workOnly.every((i) => i.notebook === 'workspace:northwind:alex'))
+    assert.equal((await refusal(service.listItems([]))).code, 'invalid_request')
+  })
+})

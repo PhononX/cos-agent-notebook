@@ -17,9 +17,10 @@ says what belongs in personal and workspace notebooks.
 - `src/format/`: pure format code (no I/O). `src/domain/`: all logic, behind `NotebookService`.
   `src/adapters/local|memory/`: implementations of `src/domain/ports.ts`. `src/cli/`: the command.
 - The domain layer imports no HTTP, MCP or git code; adapters stay thin.
-- Every call names one notebook as a `NotebookRef` (its space, personal or workspace, and its
-  id); local mode uses `personal:local:default`. Spaces are stored apart; never read one
-  notebook to write another.
+- Notebooks are named by `NotebookRef` (space, personal or workspace, and id); local mode uses
+  `personal:local:default`. Every write names one notebook; reads may cover several and label
+  each result with its notebook. Spaces are stored apart; never read one notebook to write
+  another.
 - TypeScript runs directly under Node (type stripping): import with `.ts` extensions, no enums,
   no parameter properties, no namespaces (`erasableSyntaxOnly`).
 - Errors are `NotebookError` with a code and a message that says how to fix the problem.

@@ -151,11 +151,16 @@ history: someone in two workspaces has three notebooks, one per space, kept apar
   returns only the links to the notebook asked about, so it never reveals the person's other
   spaces. Keeping the personal notebook complete is the agent's job, one call per notebook.
   Links are for people only for now.
-- **One notebook per call.** Every read and write names exactly one notebook. No operation reads
-  one notebook to write another, moves or copies items between them, or checks names across
-  them. A client with access to both (an agent working for a person at work) calls each
-  separately; deciding whether something is work or personal is the agent's judgment, made with
-  the person.
+- **One unified view to read; one notebook per write.** A chief of staff works for the person,
+  not for one notebook, so reads (other than reading a whole note) cover every notebook the
+  client may read as one view by default: today across work and home, "what's due" in one
+  answer. Every item comes back labelled with its notebook. A read can be narrowed with
+  `notebooks` (for example `["personal"]` or `["workspace:northwind:alex"]`), but most calls
+  ask for everything. The combined view exists only in the response to the person's own client;
+  it is never stored, and no workspace sees it. Every write names exactly one notebook: no
+  operation reads one notebook to write another, or moves or copies items between them (refiling
+  from personal to work is done as described above). Deciding whether something is work or
+  personal is the agent's job, with the person (`docs/spaces.md`).
 - **Deletion follows control.** Deleting a workspace deletes its notebooks. Deleting a person's
   account deletes their personal notebook; their work notebooks follow each workspace's policy.
 
@@ -268,8 +273,8 @@ and must ask the person before reorganizing anything.
 9. **Dates are absolute.** Tools take `YYYY-MM-DD` dates; the agent turns "Friday" into a date
    using the date `start_session` returned. The service never guesses.
 10. **Reads fit in a context window.** Every read takes `limit` (default 50) and returns a
-    `cursor` for more. Items come back compact: `{id, file, text, done, fields, links}`. A whole
-    note is returned only by `read_note`, which can be limited to named sections.
+    `cursor` for more. Items come back compact: `{id, notebook, file, text, done, fields, links}`.
+    A whole note is returned only by `read_note`, which can be limited to named sections.
 11. **Errors say how to fix them.** Every refusal names the problem and the next step: "No
     item matches 'deck for Dana' in actions.md. Closest: a3f9k2 'Send the v3 pricing deck to
     Dana Whitfield'."
@@ -289,6 +294,10 @@ Serve MCP over Streamable HTTP at `/mcp`, and over stdio for local use (`cos-not
 official MCP TypeScript SDK.
 
 **Read tools**
+
+Every read tool except `read_note` covers all the notebooks the client may read, as one view,
+with each result labelled by its notebook; `notebooks` narrows it. `read_note` reads one note of
+one notebook. Every write tool names one notebook.
 
 | Tool | Purpose |
 | --- | --- |
@@ -353,8 +362,10 @@ authoritative.
 ### Dashboard
 
 A web page served by the service at `/`, built only on the HTTP API with no privileged access.
-It shows today, actions, waiting, projects, people, ideas, links and facts, decisions, the
-daily log and the archive. It allows checking items off, adding items and editing notes.
+It is one view of the person across their notebooks: every item is labelled with its space, and
+a filter narrows the view to one space. Personal-only pages (about me, people) sit beside the
+shared ones. It shows today, actions, waiting, projects, people, ideas, links and facts,
+decisions, the daily log and the archive. It allows checking items off, adding items and editing notes.
 Starting point: the notebook page in `PhononX/claude-plugins`
 (`plugins/cos/templates/dotcos/brain-template.html`) and the edit operations in
 `plugins/cos/templates/dotcos/notebook-server.mjs` (toggle, replace, add, create, write).
@@ -383,9 +394,10 @@ Authentication is pluggable; the service ships two providers:
   protected resource metadata. Maps the token's subject to an account.
 
 On top of either, the service issues its own **notebook tokens**: opaque, one per client or
-device and notebook, stored hashed, scoped, revocable, and listed in the dashboard. A token's
-scopes apply to its one notebook. A client that serves a person at work and at home holds one
-token for each notebook. Scopes:
+device, stored hashed, revocable, and listed in the dashboard. A token is granted access to one
+or more notebooks, each with its own scopes, so a workspace can revoke its notebook from a
+client without touching the person's other notebooks. Unified reads cover only the notebooks a
+token is granted. Scopes:
 
 | Scope | Allows |
 | --- | --- |

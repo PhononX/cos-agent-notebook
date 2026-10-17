@@ -86,6 +86,8 @@ export interface UndoResult {
 
 export interface CompactItem {
   id: string
+  /** The notebook the item is in, like `workspace:northwind:alex`. Ids are unique only within it. */
+  notebook: string
   file: string
   text: string
   done: boolean | null
@@ -195,7 +197,7 @@ export class NotebookService {
       ),
       /** The same person's notes in work notebooks (person notes in a personal notebook). */
       same_as: sameAs !== undefined ? parseSameAs(sameAs).links : [],
-      items: note.items.map(compactItem),
+      items: note.items.map((i) => compactItem(i, notebook)),
       problems: note.problems.map(({ line, message }) => ({ line, message })),
       text,
     }
@@ -246,14 +248,33 @@ export class NotebookService {
     return out
   }
 
-  async listItems(notebook: NotebookRef, opts: { file?: string } = {}): Promise<CompactItem[]> {
-    checkRef(notebook)
-    await this.requireNotebook(notebook)
-    const copy = await WorkingCopy.load(this.store, notebook)
-    return copy
-      .items()
-      .filter((i) => opts.file === undefined || i.path === opts.file)
-      .map(compactItem)
+  /**
+   * Items from one or more notebooks as one view, each labelled with its notebook. The caller
+   * passes the notebooks the client may read (all of them by default; narrowed on request).
+   * Reading never writes, and nothing combined is stored.
+   */
+  async listItems(
+    notebooks: NotebookRef | readonly NotebookRef[],
+    opts: { file?: string } = {},
+  ): Promise<CompactItem[]> {
+    const list = Array.isArray(notebooks) ? notebooks : [notebooks as NotebookRef]
+    if (!list.length)
+      throw new NotebookError('invalid_request', 'Name at least one notebook to read.')
+    const out: CompactItem[] = []
+    const seen = new Set<string>()
+    for (const notebook of list) {
+      checkRef(notebook)
+      const key = formatRef(notebook)
+      if (seen.has(key)) continue
+      seen.add(key)
+      await this.requireNotebook(notebook)
+      const copy = await WorkingCopy.load(this.store, notebook)
+      for (const item of copy.items()) {
+        if (opts.file === undefined || item.path === opts.file)
+          out.push(compactItem(item, notebook))
+      }
+    }
+    return out
   }
 
   /** The notebook's time zone and today's date in it. */
@@ -648,7 +669,7 @@ function fileSummary(f: FileChange): FileSummary {
   }
 }
 
-export function compactItem(item: Item): CompactItem {
+export function compactItem(item: Item, notebook: NotebookRef): CompactItem {
   const fields: Record<string, string | string[]> = {}
   for (const f of item.fields) {
     const prev = fields[f.key]
@@ -657,6 +678,7 @@ export function compactItem(item: Item): CompactItem {
   }
   return {
     id: item.id,
+    notebook: formatRef(notebook),
     file: item.path,
     text: item.text,
     done: item.checked,
