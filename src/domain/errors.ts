@@ -13,6 +13,7 @@ export type ErrorCode =
   | 'conflict'
   | 'idempotency_mismatch'
   | 'not_a_notebook'
+  | 'busy'
 
 export class NotebookError extends Error {
   readonly code: ErrorCode

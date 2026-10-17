@@ -447,7 +447,7 @@ implementation in this repository.
 | `NotebookStore` | Folders on local disk, one tree per space | Per-space volumes or object storage: each person's personal space and each workspace apart |
 | `KeyProvider` | None (disk encryption is the OS's job) | Per-space or per-notebook keys from a KMS; deleting a key makes all copies of what it covers unreadable |
 | `AuthProvider` | Static token | OAuth with the hosted identity provider |
-| `Lock` | In-process mutex per notebook | Distributed lock, so several instances can serve one notebook safely |
+| `Lock` | In-process queue plus a lock file per notebook, so `serve`, the CLI and a stdio MCP server can run at once; a lock left by a process that died is taken over, and a writer that waits too long is refused as busy | Distributed lock, so several instances can serve one notebook safely |
 | `AccessLog` | Append-only file per notebook | Central store; shown to the person as "who read and changed what", and for work notebooks to workspace admins |
 | `Entitlements` | Unlimited | Quotas (storage, clients, features) per space, checked before writes; returns a clear "limit reached" error |
 | `EventBus` | In-process | Cross-instance change notifications for the sync engine and dashboard |

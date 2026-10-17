@@ -81,6 +81,7 @@ A refused call writes nothing. The error has a `code`, a `message` that says how
 | `forbidden` | The client lacks a scope (`rules:write` for `my-rules.md`) | |
 | `idempotency_mismatch` | The key was used for a different request | |
 | `not_a_notebook` | No notebook with that id | |
+| `busy` | Another program was writing to the notebook for longer than the wait (10 seconds). Nothing was written; try again | |
 
 ## Common fields
 

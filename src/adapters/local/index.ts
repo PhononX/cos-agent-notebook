@@ -12,6 +12,7 @@ import { NotebookService } from '../../domain/service.ts'
 import { FileIdempotencyStore } from './file-idempotency.ts'
 import { LocalNotebookStore, type DirFor } from './fs-store.ts'
 import { GitHistory } from './git-history.ts'
+import { FileLock } from './file-lock.ts'
 import { InProcessLock } from './lock.ts'
 import { JsonLogger } from './logger.ts'
 
@@ -48,7 +49,7 @@ export function createLocalService(opts: LocalOptions): NotebookService {
   return new NotebookService({
     store: new LocalNotebookStore(dirFor),
     history: new GitHistory(dirFor),
-    lock: new InProcessLock(),
+    lock: new FileLock(dirFor),
     idempotency: new FileIdempotencyStore(dirFor),
     logger: opts.logger ?? new JsonLogger(),
     ...(opts.clock ? { clock: opts.clock } : {}),
@@ -56,4 +57,4 @@ export function createLocalService(opts: LocalOptions): NotebookService {
   })
 }
 
-export { FileIdempotencyStore, GitHistory, InProcessLock, JsonLogger, LocalNotebookStore }
+export { FileIdempotencyStore, FileLock, GitHistory, InProcessLock, JsonLogger, LocalNotebookStore }

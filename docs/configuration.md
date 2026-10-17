@@ -31,4 +31,4 @@ up, moved or deleted without touching another.
 | Path | What it is |
 |---|---|
 | `.git/` | The notebook's history: one commit per change. |
-| `.cos-notebook/` | Service state that can be deleted at any time (idempotency records). Never committed or exported. |
+| `.cos-notebook/` | Service state that can be deleted at any time: idempotency records, and `lock`, held while a change is being written so two programs never write at once. Never committed or exported. |
