@@ -11,31 +11,31 @@ export interface FileChange {
   after: string | null
 }
 
-export class Workspace {
+export class WorkingCopy {
   private readonly notes = new Map<string, Note>()
   private readonly original = new Map<string, string | null>()
   private itemCache: Item[] | null = null
 
-  static async load(store: NotebookStore, notebook: NotebookId): Promise<Workspace> {
-    const ws = new Workspace()
+  static async load(store: NotebookStore, notebook: NotebookId): Promise<WorkingCopy> {
+    const copy = new WorkingCopy()
     const paths = await store.list(notebook)
     const texts = await Promise.all(paths.map((p) => store.read(notebook, p)))
     paths.forEach((p, i) => {
       const text = texts[i]
       if (text == null) return
-      ws.original.set(p, text)
-      ws.notes.set(p, parseNote(p, text))
+      copy.original.set(p, text)
+      copy.notes.set(p, parseNote(p, text))
     })
-    return ws
+    return copy
   }
 
-  static fromTexts(texts: Map<string, string>): Workspace {
-    const ws = new Workspace()
+  static fromTexts(texts: Map<string, string>): WorkingCopy {
+    const copy = new WorkingCopy()
     for (const [p, t] of texts) {
-      ws.original.set(p, t)
-      ws.notes.set(p, parseNote(p, t))
+      copy.original.set(p, t)
+      copy.notes.set(p, parseNote(p, t))
     }
-    return ws
+    return copy
   }
 
   paths(): string[] {

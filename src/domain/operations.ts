@@ -114,7 +114,7 @@ function quoteLines(quote: string[], indent = '  '): string[] {
 }
 
 function rawQuoteLines(b: Batch, item: Item): string[] {
-  return b.ws
+  return b.copy
     .note(item.path)!
     .text.lines()
     .slice(item.index + 1, item.index + 1 + item.quoteCount)
@@ -139,7 +139,7 @@ function rerender(
 }
 
 function requireFitting(item: Item, b: Batch): void {
-  const problem = b.ws.note(item.path)!.problems.find((p) => p.line === item.index + 1)
+  const problem = b.copy.note(item.path)!.problems.find((p) => p.line === item.index + 1)
   if (problem) {
     throw new NotebookError(
       'invalid_value',
@@ -209,7 +209,7 @@ function checkTargetPath(b: Batch, path: string, opts: { allowCreate: boolean })
   b.checkWritable(path)
   const type = noteType(path)
   if (
-    !b.ws.has(path) &&
+    !b.copy.has(path) &&
     (!opts.allowCreate ||
       type === 'other' ||
       type === 'person' ||
@@ -333,7 +333,7 @@ async function add(b: Batch, op: OperationOf<'add'>): Promise<void> {
   const line = renderChecked({ checked: checkbox ? false : null, text: sentence, fields })
   const quote = checkQuote(op.quote)
 
-  const open = b.ws.note(path)?.items.filter((i) => i.checked !== true) ?? []
+  const open = b.copy.note(path)?.items.filter((i) => i.checked !== true) ?? []
   const want = normalize(sentence)
   const dup = open.find(
     (i) => normalize(i.text) === want || normalize(i.text) === normalize(op.text),
@@ -553,7 +553,7 @@ async function decide(b: Batch, op: OperationOf<'decide'>): Promise<void> {
   fields.push({ key: 'src', value: buildSrc(op.src, b.defaultSource, b.today) })
   const line = renderChecked({ checked: null, text: `${date} ${sentence}`, fields })
 
-  const current = (b.ws.note(path)?.items ?? []).filter(
+  const current = (b.copy.note(path)?.items ?? []).filter(
     (i) => !i.fields.some((f) => f.key === 'superseded'),
   )
   const dup = current.find((i) => normalize(linePrefixDate(i.text).rest) === normalize(sentence))
@@ -655,7 +655,7 @@ async function note(b: Batch, op: OperationOf<'note'>): Promise<void> {
 
   const front = frontMatterValues(b, type, op.front_matter ?? {})
   let status = 'unchanged'
-  if (!b.ws.has(path) && name !== null) {
+  if (!b.copy.has(path) && name !== null) {
     const withDefaults =
       type === 'project' && !front.some(([k]) => k === 'status')
         ? [['status', 'active'] as [string, string], ...front]
@@ -721,7 +721,7 @@ async function merge(b: Batch, op: OperationOf<'merge'>): Promise<void> {
   const line = rerender(keep, { text, fields })
   b.replaceItem(keep, [line, ...quotes])
   for (const other of others) {
-    const current = b.ws.findById(other.id)
+    const current = b.copy.findById(other.id)
     if (current) archiveItem(b, current, 'merged')
   }
   b.resultItem(keep.path, line, keep.id)
@@ -742,7 +742,7 @@ async function promote(b: Batch, op: OperationOf<'promote'>): Promise<void> {
   const quotes = rawQuoteLines(b, item)
   const line = rerender(item, { top: true })
   b.removeItem(item)
-  if (!b.ws.has(path)) {
+  if (!b.copy.has(path)) {
     createNamedNote(
       b,
       path,
@@ -803,10 +803,10 @@ async function setFocus(b: Batch, op: OperationOf<'set_focus'>): Promise<void> {
   }
   if (op.suggest !== undefined) {
     const e = composeEntry(b, op.suggest, { src: true, label: 'suggest' })
-    const section = b.ws
+    const section = b.copy
       .note(path)!
       .headings.find((h) => h.title.toLowerCase() === 'suggested moves')
-    const existing = b.ws
+    const existing = b.copy
       .note(path)!
       .items.find(
         (i) =>
@@ -887,7 +887,7 @@ async function rule(b: Batch, op: OperationOf<'rule'>): Promise<void> {
     for (const f of extra) fields = setField(fields, f.key, f.value)
     fields.push({ key: 'src', value: buildSrc(op.src, b.defaultSource, b.today) })
     const line = renderChecked({ checked: null, text: sentence, fields })
-    const dup = b.ws.note(path)!.items.find((i) => normalize(i.text) === normalize(sentence))
+    const dup = b.copy.note(path)!.items.find((i) => normalize(i.text) === normalize(sentence))
     if (dup) {
       b.warn('duplicate', `my-rules.md already has this rule (${dup.id}).`, { id: dup.id })
       b.resultItem(path, dup.raw)
@@ -911,7 +911,7 @@ async function log(b: Batch, op: OperationOf<'log'>): Promise<void> {
   if (op.src !== undefined)
     fields.push({ key: 'src', value: buildSrc(op.src, b.defaultSource, b.today) })
   const line = renderChecked({ checked: null, text: `${b.now.time} ${sentence}`, fields })
-  if (!b.ws.has(path)) b.ensureNote(path, newNoteLines(path))
+  if (!b.copy.has(path)) b.ensureNote(path, newNoteLines(path))
   b.appendToSection(path, undefined, [line])
   b.resultItem(path, line)
   b.status('logged')

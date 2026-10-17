@@ -34,7 +34,7 @@ import {
 import { parseRequest } from './request.ts'
 import { normalize, textSimilarity } from './similarity.ts'
 import { systemTimeZone, zonedNow, type ZonedNow } from './time.ts'
-import { Workspace, type FileChange } from './workspace.ts'
+import { WorkingCopy, type FileChange } from './working-copy.ts'
 
 export interface ServiceDeps {
   store: NotebookStore
@@ -127,7 +127,7 @@ export class NotebookService {
       }
       await this.store.create(notebook)
       await this.history.init(notebook)
-      const ws = Workspace.fromTexts(new Map())
+      const copy = WorkingCopy.fromTexts(new Map())
       for (const path of STARTER_FILES) {
         let lines = newNoteLines(path)
         if (path === 'my-rules.md') {
@@ -144,11 +144,11 @@ export class NotebookService {
             ...lines,
           ]
         }
-        ws.create(path, lines)
+        copy.create(path, lines)
       }
       const now = zonedNow(this.clock.now(), timezone)
       const changeId = newChangeId()
-      const files = await this.commit(notebook, ws, {
+      const files = await this.commit(notebook, copy, {
         changeId,
         summary: 'Started the notebook',
         actor,
@@ -184,8 +184,8 @@ export class NotebookService {
   async listItems(notebook: NotebookId, opts: { file?: string } = {}): Promise<CompactItem[]> {
     checkNotebookId(notebook)
     await this.requireNotebook(notebook)
-    const ws = await Workspace.load(this.store, notebook)
-    return ws
+    const copy = await WorkingCopy.load(this.store, notebook)
+    return copy
       .items()
       .filter((i) => opts.file === undefined || i.path === opts.file)
       .map(compactItem)
@@ -195,8 +195,8 @@ export class NotebookService {
   async today(notebook: NotebookId): Promise<ZonedNow> {
     checkNotebookId(notebook)
     await this.requireNotebook(notebook)
-    const ws = await Workspace.load(this.store, notebook)
-    return zonedNow(this.clock.now(), this.timezoneOf(ws).timezone)
+    const copy = await WorkingCopy.load(this.store, notebook)
+    return zonedNow(this.clock.now(), this.timezoneOf(copy).timezone)
   }
 
   // ---------- writes ----------
@@ -229,15 +229,15 @@ export class NotebookService {
           }
         }
 
-        const ws = await Workspace.load(this.store, notebook)
-        const { timezone, warning } = this.timezoneOf(ws)
+        const copy = await WorkingCopy.load(this.store, notebook)
+        const { timezone, warning } = this.timezoneOf(copy)
         const now = zonedNow(this.clock.now(), timezone)
         const batch = new Batch({
-          ws,
+          copy,
           actor,
           now,
           ...(req.confirm_new_names ? { confirmNewNames: req.confirm_new_names } : {}),
-          staleLookup: (id) => this.findStale(notebook, ws, id),
+          staleLookup: (id) => this.findStale(notebook, copy, id),
         })
         for (const [i, op] of req.operations.entries()) {
           batch.begin(i, op.op)
@@ -253,7 +253,7 @@ export class NotebookService {
         const summary =
           summarize(descriptions) || (batch.hasChanges() ? 'Added to the daily log' : 'No changes')
         const warnings: Warning[] = warning ? [warning] : []
-        const changed = ws.changes()
+        const changed = copy.changes()
         let changeId: string | null = null
         let files: FileSummary[] = changed.map(fileSummary)
         if (req.dry_run) {
@@ -265,7 +265,7 @@ export class NotebookService {
           }
         } else if (changed.length) {
           changeId = newChangeId()
-          files = await this.commit(notebook, ws, {
+          files = await this.commit(notebook, copy, {
             changeId,
             summary,
             actor,
@@ -329,7 +329,7 @@ export class NotebookService {
           `There is no change ${changeId} in this notebook's history. Changes older than the retention window can't be undone.`,
         )
       }
-      const ws = await Workspace.load(this.store, notebook)
+      const copy = await WorkingCopy.load(this.store, notebook)
       const conflicts: string[] = []
       for (const f of record.files) {
         if (f.path.startsWith('log/')) continue
@@ -339,7 +339,7 @@ export class NotebookService {
             'This change touched my-rules.md, and undoing it needs the rules:write scope.',
           )
         }
-        const current = ws.note(f.path)?.text.toString() ?? null
+        const current = copy.note(f.path)?.text.toString() ?? null
         let target: string | null
         if (current === f.after) target = f.before
         else if (current === null || f.after === null || f.before === null) {
@@ -353,7 +353,7 @@ export class NotebookService {
           }
           target = merged.text
         }
-        if (target !== current) ws.replace(f.path, target)
+        if (target !== current) copy.replace(f.path, target)
       }
       if (conflicts.length) {
         throw new NotebookError(
@@ -362,16 +362,16 @@ export class NotebookService {
           { files: conflicts },
         )
       }
-      if (!ws.changes().length) {
+      if (!copy.changes().length) {
         throw new NotebookError(
           'conflict',
           `Change ${changeId} has nothing left to undo; it may already have been undone.`,
         )
       }
-      const now = zonedNow(this.clock.now(), this.timezoneOf(ws).timezone)
+      const now = zonedNow(this.clock.now(), this.timezoneOf(copy).timezone)
       const newId = newChangeId()
       const summary = `Undid ${changeId} (${record.summary})`
-      const files = await this.commit(notebook, ws, { changeId: newId, summary, actor, now })
+      const files = await this.commit(notebook, copy, { changeId: newId, summary, actor, now })
       this.logger.info('undo', {
         notebook,
         change_id: newId,
@@ -393,8 +393,8 @@ export class NotebookService {
     }
   }
 
-  private timezoneOf(ws: Workspace): { timezone: string; warning?: Warning } {
-    const tz = frontMatterValue(ws.note('my-rules.md')?.frontMatter ?? null, 'timezone')
+  private timezoneOf(copy: WorkingCopy): { timezone: string; warning?: Warning } {
+    const tz = frontMatterValue(copy.note('my-rules.md')?.frontMatter ?? null, 'timezone')
     if (tz === undefined) return { timezone: this.defaultTimezone }
     if (isTimeZone(tz)) return { timezone: tz }
     return {
@@ -409,11 +409,11 @@ export class NotebookService {
   /** Adds the daily log line, writes every changed file, and records one history entry. */
   private async commit(
     notebook: NotebookId,
-    ws: Workspace,
+    copy: WorkingCopy,
     c: { changeId: string; summary: string; actor: Actor; now: ZonedNow; logLine?: boolean },
   ): Promise<FileSummary[]> {
-    if (c.logLine !== false) addLogLine(ws, c)
-    const changed = ws.changes()
+    if (c.logLine !== false) addLogLine(copy, c)
+    const changed = copy.changes()
     try {
       await this.store.write(
         notebook,
@@ -442,24 +442,24 @@ export class NotebookService {
 
   private async findStale(
     notebook: NotebookId,
-    ws: Workspace,
+    copy: WorkingCopy,
     id: string,
   ): Promise<StaleItem | null> {
     const versions = await this.history.recentVersions(notebook, STALE_SEARCH_CHANGES)
     for (const v of versions) {
       const was = parseNote(v.path, v.content).items.find((i) => i.id === id)
       if (!was) continue
-      const now = bestSuccessor(ws, was)
+      const now = bestSuccessor(copy, was)
       return { was: { file: was.path, text: was.text }, now }
     }
     return null
   }
 }
 
-function bestSuccessor(ws: Workspace, was: Item): Candidate | null {
-  const same = ws.items().find((i) => normalize(i.text) === normalize(was.text))
+function bestSuccessor(copy: WorkingCopy, was: Item): Candidate | null {
+  const same = copy.items().find((i) => normalize(i.text) === normalize(was.text))
   if (same) return candidate(same)
-  const inFile = (ws.note(was.path)?.items ?? [])
+  const inFile = (copy.note(was.path)?.items ?? [])
     .map((i) => ({ i, s: textSimilarity(was.text, i.text) }))
     .filter((x) => x.s >= 0.5)
     .sort((a, b) => b.s - a.s)[0]
@@ -467,7 +467,7 @@ function bestSuccessor(ws: Workspace, was: Item): Candidate | null {
 }
 
 function addLogLine(
-  ws: Workspace,
+  copy: WorkingCopy,
   c: { changeId: string; summary: string; actor: Actor; now: ZonedNow },
 ): void {
   const path = logPath(c.now.date)
@@ -481,17 +481,17 @@ function addLogLine(
   } catch {
     line = renderChecked({
       checked: null,
-      text: `${c.now.time} Changed ${ws.changes().length} notes`,
+      text: `${c.now.time} Changed ${copy.changes().length} notes`,
       fields,
     })
   }
-  if (!ws.has(path)) ws.create(path, newNoteLines(path))
-  const note = ws.note(path)!
+  if (!copy.has(path)) copy.create(path, newNoteLines(path))
+  const note = copy.note(path)!
   const lines = note.text.lines()
   let last = lines.length - 1
   while (last >= 0 && lines[last]!.trim() === '') last--
   const prevIsItem = note.items.some((i) => i.index <= last && last <= i.index + i.quoteCount)
-  ws.splice(path, last + 1, 0, prevIsItem ? [line] : ['', line])
+  copy.splice(path, last + 1, 0, prevIsItem ? [line] : ['', line])
 }
 
 function summarize(descriptions: string[]): string {

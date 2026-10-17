@@ -19,7 +19,7 @@ import { nameProblem } from '../format/values.ts'
 import type { Target } from './request.ts'
 import { phraseMatches, textSimilarity } from './similarity.ts'
 import type { ZonedNow } from './time.ts'
-import type { Workspace } from './workspace.ts'
+import type { WorkingCopy } from './working-copy.ts'
 
 export interface ResultItem {
   id: string | null
@@ -83,7 +83,7 @@ const DEFAULT_SCOPE_EXCLUDES = (path: string) =>
   LOG_PATH.test(path) || ARCHIVE_PATH.test(path) || path === 'brief.md' || path.startsWith('log/')
 
 export class Batch {
-  readonly ws: Workspace
+  readonly copy: WorkingCopy
   readonly actor: Actor
   readonly now: ZonedNow
   readonly newNames: string[] = []
@@ -96,13 +96,13 @@ export class Batch {
   private readonly aliases = new Map<string, { path: string; raw: string }>()
 
   constructor(opts: {
-    ws: Workspace
+    copy: WorkingCopy
     actor: Actor
     now: ZonedNow
     confirmNewNames?: readonly string[]
     staleLookup: StaleLookup
   }) {
-    this.ws = opts.ws
+    this.copy = opts.copy
     this.actor = opts.actor
     this.now = opts.now
     this.confirmed = new Set(opts.confirmNewNames ?? [])
@@ -193,21 +193,21 @@ export class Batch {
 
   /** The note at `path`, created from its template if it doesn't exist yet. */
   ensureNote(path: string, lines?: readonly string[]): Note {
-    const existing = this.ws.note(path)
+    const existing = this.copy.note(path)
     if (existing) return existing
     const initial = lines ?? newNoteLines(path)
     this.record(path, [], [...initial])
-    return this.ws.create(path, initial)
+    return this.copy.create(path, initial)
   }
 
   insert(path: string, index: number, lines: readonly string[]): void {
-    this.ws.splice(path, index, 0, lines)
+    this.copy.splice(path, index, 0, lines)
     this.record(path, [], [...lines])
   }
 
   /** Replaces an item (its line and quote lines) with new lines. */
   replaceItem(item: Item, lines: readonly string[]): void {
-    const removed = this.ws.splice(item.path, item.index, 1 + item.quoteCount, lines)
+    const removed = this.copy.splice(item.path, item.index, 1 + item.quoteCount, lines)
     this.record(item.path, removed, [...lines])
     if (lines[0] !== undefined && lines[0] !== item.raw) {
       const to = { path: item.path, raw: lines[0] }
@@ -218,7 +218,7 @@ export class Batch {
   }
 
   removeItem(item: Item): string[] {
-    const removed = this.ws.splice(item.path, item.index, 1 + item.quoteCount, [])
+    const removed = this.copy.splice(item.path, item.index, 1 + item.quoteCount, [])
     this.record(item.path, removed, [])
     return removed
   }
@@ -274,7 +274,7 @@ export class Batch {
     const note = this.ensureNote(path)
     if (frontMatterValue(note.frontMatter, key) === (value ?? undefined)) return false
     const edit = setFrontMatterLines(note, key, value)
-    const removed = this.ws.splice(path, edit.start, edit.count, edit.lines)
+    const removed = this.copy.splice(path, edit.start, edit.count, edit.lines)
     this.record(path, removed, edit.lines)
     return true
   }
@@ -283,7 +283,7 @@ export class Batch {
 
   /** Notes an item this operation wrote; its final id is worked out when the call ends. */
   resultItem(path: string, raw: string, previousId?: string): void {
-    const note = this.ws.note(path)
+    const note = this.copy.note(path)
     const lines = note ? note.text.lines() : []
     const at = note?.items.findLast((i) => i.raw === raw)
     let occurrence = 0
@@ -303,7 +303,7 @@ export class Batch {
   }
 
   private finalItem(p: PendingItem): ResultItem {
-    const note = this.ws.note(p.path)
+    const note = this.copy.note(p.path)
     const same = note?.items.filter((i) => i.raw === p.raw) ?? []
     const item = same[Math.min(p.occurrence, same.length - 1)]
     return {
@@ -319,12 +319,12 @@ export class Batch {
   private knownNames(): KnownName[] {
     if (!this.known) {
       const out: KnownName[] = []
-      for (const path of this.ws.paths()) {
+      for (const path of this.copy.paths()) {
         const t = noteType(path)
         const name = noteName(path)
         if (name && (t === 'person' || t === 'project' || t === 'area')) out.push({ name, type: t })
       }
-      for (const item of this.ws.items())
+      for (const item of this.copy.items())
         for (const l of item.links) out.push({ name: l, type: 'link' })
       this.known = out
     }
@@ -371,7 +371,7 @@ export class Batch {
     if (target.file !== undefined) {
       const problem = pathProblem(target.file)
       if (problem) throw new NotebookError('invalid_value', `The file "${target.file}" ${problem}.`)
-      if (!this.ws.has(target.file))
+      if (!this.copy.has(target.file))
         throw new NotebookError('not_found', `There is no note ${target.file}.`)
     }
     if (target.id) return this.resolveId(target.id, target.file, opts.reject)
@@ -387,10 +387,10 @@ export class Batch {
     file: string | undefined,
     reject?: (item: Item) => string | null,
   ): Promise<Item> {
-    let item = this.ws.findById(id)
+    let item = this.copy.findById(id)
     if (!item) {
       const alias = this.aliases.get(id)
-      if (alias) item = this.ws.note(alias.path)?.items.find((i) => i.raw === alias.raw)
+      if (alias) item = this.copy.note(alias.path)?.items.find((i) => i.raw === alias.raw)
     }
     if (item && file !== undefined && item.path !== file) {
       throw new NotebookError('not_found', `Item ${id} is in ${item.path}, not ${file}.`, {
@@ -432,7 +432,7 @@ export class Batch {
         : opts.scope
           ? opts.scope(i.path)
           : !DEFAULT_SCOPE_EXCLUDES(i.path)
-    const pool = this.ws.items().filter((i) => inScope(i) && !opts.reject?.(i))
+    const pool = this.copy.items().filter((i) => inScope(i) && !opts.reject?.(i))
     const scored = pool.map((i) => ({ i, m: phraseMatches(phrase, i.text) })).filter((x) => x.m)
     // The best kind of match wins: the whole text, then the phrase as a run of words, then the
     // words in any order.
