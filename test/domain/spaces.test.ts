@@ -107,6 +107,26 @@ describe('personal and workspace notebooks', () => {
     assert.equal((await service.undo(work, r.change_id!, AGENT)).undone, r.change_id)
   })
 
+  it('give a person a separate notebook in each workspace', async () => {
+    const { store, service } = await twoNotebooks()
+    const other = workspaceNotebook('fernhill', 'alex')
+    await service.init(other, { actor: AGENT })
+    await service.applyChanges(
+      other,
+      { operations: [{ op: 'add', kind: 'action', text: 'Draft the Fernhill board memo' }] },
+      AGENT,
+    )
+    assert.match((await store.read(other, 'actions.md'))!, /Fernhill board memo/)
+    for (const nb of [work, personal]) {
+      assert.doesNotMatch((await store.read(nb, 'actions.md'))!, /Fernhill/)
+    }
+    assert.deepEqual([...store.notebooks.keys()].sort(), [
+      'personal/alex/default',
+      'workspaces/fernhill/alex',
+      'workspaces/northwind/alex',
+    ])
+  })
+
   it('check names only against the notebook being written', async () => {
     const { service } = await twoNotebooks()
     await service.applyChanges(

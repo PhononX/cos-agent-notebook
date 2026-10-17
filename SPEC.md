@@ -100,9 +100,9 @@ Requirements:
 
 ## Personal and workspace notebooks
 
-A person can have a personal notebook and, for each workspace they belong to, a work notebook
-in that workspace. Each one is a complete notebook in the same format, with its own history: a
-person with a job has two pictures of their world, kept apart.
+A person can have a personal notebook and, for each workspace they belong to, a separate work
+notebook in that workspace. Each one is a complete notebook in the same format, with its own
+history: someone in two workspaces has three notebooks, one per space, kept apart.
 
 - **Naming.** A notebook is named by its space and its id: `personal:<account>:<id>` (the id is
   usually `default`) or `workspace:<workspace>:<member>`. Each part is a lowercase id.
@@ -115,6 +115,9 @@ person with a job has two pictures of their world, kept apart.
 - **The workspace controls its work notebooks.** The member reads and writes theirs day to day.
   Workspace admins set retention, and can export or delete a work notebook. A work notebook stays
   with the workspace when the member leaves, and the member loses access to it.
+- **Notebooks never move between spaces.** A work notebook is created in its workspace and
+  stays there; a personal notebook can't be moved into a workspace, or a work notebook out to a
+  person or into another workspace. Joining a new workspace starts a new, empty notebook there.
 - **One notebook per call.** Every read and write names exactly one notebook. No operation reads
   one notebook to write another, moves or copies items between them, or checks names across
   them. A client with access to both (an agent working for a person at work) calls each
@@ -439,6 +442,6 @@ Each milestone ends with passing tests and an updated README section on how to r
   enabling by default.
 - License: AGPL (prevents a closed hosted copy) or MIT/Apache (wider adoption).
 - Whether a member leaving a workspace may take an export of their work notebook (a workspace
-  setting?), and whether a person can move a personal notebook into a workspace or back.
+  setting?).
 - Whether workspaces will later want shared notebooks written by a whole team. Today every
   notebook is one person's.
