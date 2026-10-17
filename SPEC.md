@@ -104,6 +104,13 @@ A person can have a personal notebook and, for each workspace they belong to, a 
 notebook in that workspace. Each one is a complete notebook in the same format, with its own
 history: someone in two workspaces has three notebooks, one per space, kept apart.
 
+- **What goes where** is defined in `docs/spaces.md`: whose business is it, the company's or
+  the person's? It lists what workspaces keep (confidential business, customers, work product,
+  work commitments, colleagues in their role, others' HR matters) and what is the person's and
+  travels with them (themselves, their career and own employment, their relationships as people,
+  general know-how). When an item doesn't clearly pass the test, the agent asks the person; the
+  channel it came through is a hint, never the decision. The person's own rules and the
+  workspace's rules win over these defaults.
 - **Naming.** A notebook is named by its space and its id: `personal:<account>:<id>` (the id is
   usually `default`) or `workspace:<workspace>:<member>`. Each part is a lowercase id.
 - **Storage is segmented by space.** Each space's notebooks are stored apart: locally under
@@ -115,6 +122,11 @@ history: someone in two workspaces has three notebooks, one per space, kept apar
 - **The workspace controls its work notebooks.** The member reads and writes theirs day to day.
   Workspace admins set retention, and can export or delete a work notebook. A work notebook stays
   with the workspace when the member leaves, and the member loses access to it.
+- **Mistakes in a work notebook are the workspace's to purge.** If something personal is filed
+  in a work notebook, the member can archive or correct it like any item, but only a workspace
+  admin can purge it from history, as with personal mail sent to a work address. A member who
+  could purge their own items could also clear work records, so they can't. This is why the
+  agent asks when an item's side isn't clear.
 - **Notebooks never move between spaces.** A work notebook is created in its workspace and
   stays there; a personal notebook can't be moved into a workspace, or a work notebook out to a
   person or into another workspace. Joining a new workspace starts a new, empty notebook there.
@@ -215,7 +227,8 @@ news about a person), may mishear a name from a voice transcript, may retry afte
 and must ask the person before reorganizing anything.
 
 1. **One call to start a session.** `start_session` returns everything an agent needs to begin:
-   the combined profile, today's date and weekday in the notebook's time zone, current focus,
+   the combined profile, today's date and weekday in the notebook's time zone, the filing rules
+   for this notebook's space (from `docs/spaces.md` and any rules of its own), current focus,
    reminders to raise, counts of open, due and overdue items, and changes made by others
    (people on the dashboard, other agents) since this client's last session.
 2. **One call per exchange.** `apply_changes` takes a list of operations and applies them

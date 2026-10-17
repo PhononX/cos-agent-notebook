@@ -12,6 +12,8 @@ thinking; the service keeps the structure, the rules and the history.
 - [`docs/notebook-format.md`](docs/notebook-format.md): the notebook layout and line format
   (version 1), a public contract.
 - [`docs/operations.md`](docs/operations.md): the `apply_changes` operations.
+- [`docs/spaces.md`](docs/spaces.md): what belongs in a personal notebook and what in a
+  workspace notebook.
 - [`docs/configuration.md`](docs/configuration.md): settings.
 
 ## Status

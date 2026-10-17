@@ -2,7 +2,8 @@
 
 `SPEC.md` is the source of truth for the design. Read it before changing behavior; if the design
 changes, update `SPEC.md` in the same commit and say why. `docs/notebook-format.md` is the public
-format contract (versioned); `docs/operations.md` documents `apply_changes`.
+format contract (versioned); `docs/operations.md` documents `apply_changes`; `docs/spaces.md`
+says what belongs in personal and workspace notebooks.
 
 ## Commands
 
