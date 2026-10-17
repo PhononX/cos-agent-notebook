@@ -1,0 +1,235 @@
+import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { cp, readFile, symlink, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { describe, it } from 'node:test'
+import {
+  createLocalService,
+  LOCAL_NOTEBOOK as NB,
+  localDirFor,
+} from '../../src/adapters/local/index.ts'
+import { LocalNotebookStore } from '../../src/adapters/local/fs-store.ts'
+import { GitHistory } from '../../src/adapters/local/git-history.ts'
+import { FIXTURE, fixtureNotes } from '../helpers/fixture.ts'
+import { refusal } from '../helpers/refusal.ts'
+import { AGENT, CaptureLogger, NOW, TODAY } from '../helpers/service.ts'
+import { tempDir } from '../helpers/tmp.ts'
+
+const git = (dir: string, ...args: string[]) =>
+  execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
+
+async function localFixture() {
+  const dir = await tempDir()
+  await cp(FIXTURE, dir, { recursive: true })
+  const history = new GitHistory(localDirFor(dir))
+  await history.init(NB)
+  git(dir, 'add', '-A')
+  git(
+    dir,
+    '-c',
+    'user.name=Fixture',
+    '-c',
+    'user.email=fixture@example.com',
+    'commit',
+    '-q',
+    '-m',
+    'Fixture',
+  )
+  const logger = new CaptureLogger()
+  const service = createLocalService({ dir, logger, clock: { now: () => NOW } })
+  return { dir, service, logger }
+}
+
+describe('init', () => {
+  it('starts a notebook with the starter files and one commit', async () => {
+    const dir = join(await tempDir(), 'notebook')
+    const service = createLocalService({
+      dir,
+      logger: new CaptureLogger(),
+      clock: { now: () => NOW },
+    })
+    const r = await service.init(NB, { actor: { client: 'cli' }, timezone: 'Europe/Berlin' })
+    assert.ok(r.files.includes('actions.md'))
+    assert.ok(r.files.includes('log/2026-10-17.md'))
+    assert.match(
+      await readFile(join(dir, 'my-rules.md'), 'utf8'),
+      /^---\ntimezone: Europe\/Berlin\nnudges_per_day: 3\nstale_days: 30\nmeeting_prep: offer\n---\n# My rules\n/,
+    )
+    assert.equal(git(dir, 'log', '--format=%an|%s').trim(), 'cli|Started the notebook')
+    assert.match(
+      await readFile(join(dir, 'log', '2026-10-17.md'), 'utf8'),
+      /- 16:05 Started the notebook \[by:: cli\] \[change:: ch_/,
+    )
+    assert.equal((await refusal(service.init(NB, { actor: { client: 'cli' } }))).code, 'conflict')
+  })
+})
+
+describe('local service with git', () => {
+  it('commits each change with the actor as author and the change id as a trailer', async () => {
+    const { dir, service } = await localFixture()
+    const r = await service.applyChanges(
+      NB,
+      { operations: [{ op: 'add', kind: 'action', text: 'Book the venue for March' }] },
+      AGENT,
+    )
+    const [author, email, subject] = git(dir, 'log', '-1', '--format=%an|%ae|%s').trim().split('|')
+    assert.equal(author, 'claude-desktop for Alex')
+    assert.equal(email, 'claude-desktop@clients.cos-notebook.invalid')
+    assert.equal(subject, 'Added "Book the venue for March" to actions.md')
+    assert.equal(
+      git(dir, 'log', '-1', '--format=%(trailers:key=Cos-Change,valueonly)').trim(),
+      r.change_id,
+    )
+    assert.equal(git(dir, 'log', '-1', '--format=%cn').trim(), 'cos-notebook')
+    assert.deepEqual(
+      git(dir, 'show', '--name-only', '--format=', 'HEAD').trim().split('\n').sort(),
+      ['actions.md', `log/${TODAY}.md`],
+    )
+    assert.equal(git(dir, 'status', '--porcelain'), '')
+  })
+
+  it('keeps CRLF files and files with no final newline byte for byte', async () => {
+    const { dir, service } = await localFixture()
+    await service.applyChanges(
+      NB,
+      {
+        operations: [
+          { op: 'update', match: 'Notion', file: 'sources.md', fields: { status: 'connected' } },
+          { op: 'add', kind: 'fact', text: 'The offsite is in Lisbon' },
+        ],
+      },
+      AGENT,
+    )
+    const sources = await readFile(join(dir, 'sources.md'), 'utf8')
+    assert.equal(
+      sources,
+      fixtureNotes().get('sources.md')!.replace('[status:: not connected]', '[status:: connected]'),
+    )
+    const facts = await readFile(join(dir, 'facts.md'), 'utf8')
+    assert.ok(
+      facts.endsWith(
+        `[src:: onboarding 2026-10-01]\n- The offsite is in Lisbon [src:: cv ${TODAY}]`,
+      ),
+    )
+  })
+
+  it('undoes a change even after a later change to another part of the same file', async () => {
+    const { dir, service } = await localFixture()
+    const first = await service.applyChanges(
+      NB,
+      { operations: [{ op: 'complete', match: 'Reply to Jordan' }] },
+      AGENT,
+    )
+    await service.applyChanges(
+      NB,
+      { operations: [{ op: 'add', kind: 'action', text: 'Order new badges' }] },
+      AGENT,
+    )
+    const u = await service.undo(NB, first.change_id!, AGENT)
+    const actions = await readFile(join(dir, 'actions.md'), 'utf8')
+    assert.ok(
+      actions.includes(
+        '- [ ] Reply to [[Jordan Kim]] with Q3 churn numbers [due:: 2026-10-14] [src:: gmail 2026-10-12]\n',
+      ),
+    )
+    assert.ok(actions.includes('Order new badges'))
+    assert.equal(
+      git(dir, 'log', '-1', '--format=%(trailers:key=Cos-Change,valueonly)').trim(),
+      u.change_id,
+    )
+    assert.equal(git(dir, 'rev-list', '--count', 'HEAD').trim(), '4')
+  })
+
+  it('refuses an undo whose lines were changed since', async () => {
+    const { service } = await localFixture()
+    const first = await service.applyChanges(
+      NB,
+      { operations: [{ op: 'complete', match: 'Reply to Jordan' }] },
+      AGENT,
+    )
+    await service.applyChanges(
+      NB,
+      { operations: [{ op: 'update', match: 'Reply to Jordan', fields: { due: '2026-10-30' } }] },
+      AGENT,
+    )
+    const e = await refusal(service.undo(NB, first.change_id!, AGENT))
+    assert.equal(e.code, 'conflict')
+    assert.match(e.message, /actions\.md/)
+  })
+
+  it('answers a stale id with what the item became, from git history', async () => {
+    const { service } = await localFixture()
+    const [item] = await service.listItems(NB, { file: 'waiting.md' })
+    await service.applyChanges(
+      NB,
+      { operations: [{ op: 'update', id: item!.id, fields: { nudged: TODAY } }] },
+      AGENT,
+    )
+    const e = await refusal(
+      service.applyChanges(NB, { operations: [{ op: 'complete', id: item!.id }] }, AGENT),
+    )
+    assert.equal(e.code, 'stale_id')
+    assert.equal((e.details.now as { text: string }).text, item!.text)
+  })
+
+  it('remembers idempotency keys across service instances', async () => {
+    const { dir, service } = await localFixture()
+    const req = {
+      operations: [{ op: 'add', kind: 'inbox', text: 'Retry me' }],
+      idempotency_key: 'k-12345678',
+    }
+    const first = await service.applyChanges(NB, req, AGENT)
+    const again = createLocalService({
+      dir,
+      logger: new CaptureLogger(),
+      clock: { now: () => NOW },
+    })
+    const second = await again.applyChanges(NB, req, AGENT)
+    assert.equal(second.replayed, true)
+    assert.equal(second.change_id, first.change_id)
+    assert.equal(git(dir, 'status', '--porcelain'), '')
+  })
+
+  it('reads notes with ids and problems', async () => {
+    const { service } = await localFixture()
+    const note = await service.readNote(NB, 'inbox.md')
+    assert.equal(note.items.length, 5)
+    assert.deepEqual(
+      note.problems.map((p) => p.line),
+      [8, 8, 9],
+    )
+    assert.equal(note.items[0]!.done, null)
+  })
+
+  it('keeps note text out of the logs', async () => {
+    const { service, logger } = await localFixture()
+    await service.applyChanges(
+      NB,
+      { operations: [{ op: 'add', kind: 'fact', text: 'Quokka-canary-4410 likes tea' }] },
+      AGENT,
+    )
+    await refusal(
+      service.applyChanges(
+        NB,
+        { operations: [{ op: 'complete', match: 'Quokka-canary-4410' }] },
+        AGENT,
+      ),
+    )
+    for (const line of logger.lines) assert.ok(!line.includes('Quokka'), line)
+  })
+})
+
+describe('local store', () => {
+  it('lists notes without hidden folders or symbolic links, and refuses paths outside', async () => {
+    const dir = await tempDir()
+    const store = new LocalNotebookStore(localDirFor(dir))
+    await store.write(NB, [{ path: 'people/Dana Whitfield.md', content: '# Dana Whitfield\n' }])
+    await writeFile(join(dir, 'notes.txt'), 'x')
+    await symlink('/etc', join(dir, 'etc-link'))
+    await writeFile(join(dir, 'outside.md'), 'x')
+    await symlink(join(dir, 'outside.md'), join(dir, 'linked.md'))
+    assert.deepEqual(await store.list(NB), ['outside.md', 'people/Dana Whitfield.md'])
+    await assert.rejects(store.read(NB, '../secret.md'))
+    await assert.rejects(store.write(NB, [{ path: '.git/config.md', content: 'x' }]))
+  })
+})

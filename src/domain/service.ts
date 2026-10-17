@@ -122,7 +122,7 @@ export class NotebookService {
       if ((await this.store.exists(notebook)) && (await this.store.list(notebook)).length > 0) {
         throw new NotebookError(
           'conflict',
-          'There is already a notebook here; nothing was changed.',
+          'This folder already has notes in it, so nothing was changed. Choose an empty or new folder.',
         )
       }
       await this.store.create(notebook)

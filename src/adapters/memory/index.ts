@@ -8,7 +8,6 @@ import type {
   History,
   IdempotencyRecord,
   IdempotencyStore,
-  Lock,
   NotebookId,
   NotebookStore,
 } from '../../domain/ports.ts'
@@ -110,19 +109,7 @@ export class MemoryHistory implements History {
   }
 }
 
-export class MemoryLock implements Lock {
-  private readonly tails = new Map<NotebookId, Promise<unknown>>()
-
-  run<T>(notebook: NotebookId, fn: () => Promise<T>): Promise<T> {
-    const prev = this.tails.get(notebook) ?? Promise.resolve()
-    const next = prev.then(fn, fn)
-    this.tails.set(
-      notebook,
-      next.catch(() => undefined),
-    )
-    return next
-  }
-}
+export { InProcessLock as MemoryLock } from '../local/lock.ts'
 
 export class MemoryIdempotency implements IdempotencyStore {
   private readonly records = new Map<string, IdempotencyRecord>()
