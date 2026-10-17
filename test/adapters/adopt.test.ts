@@ -5,6 +5,7 @@ import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { createLocalService, LOCAL_NOTEBOOK as NB } from '../../src/adapters/local/index.ts'
+import { workspaceNotebook } from '../../src/domain/notebook-ref.ts'
 import { FIXTURE, fixtureNotes } from '../helpers/fixture.ts'
 import { refusal } from '../helpers/refusal.ts'
 import { AGENT, CaptureLogger, NOW, TODAY } from '../helpers/service.ts'
@@ -148,5 +149,27 @@ describe('adopt', () => {
     const again = await refusal(serviceFor(adopted).adopt(NB, { actor: CLI }))
     assert.equal(again.code, 'conflict')
     assert.equal((await refusal(serviceFor(adopted).init(NB, { actor: CLI }))).code, 'conflict')
+  })
+})
+
+describe('adopting a work notebook', () => {
+  it('adds the workspace starter files, never about-me.md', async () => {
+    const root = await tempDir()
+    const service = createLocalService({
+      root,
+      logger: new CaptureLogger(),
+      clock: { now: () => NOW },
+    })
+    const work = workspaceNotebook('northwind', 'alex')
+    const dir = join(root, 'workspaces', 'northwind', 'alex')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'actions.md'), '# My actions\n\n## To do\n')
+    const r = await service.adopt(work, { actor: CLI, timezone: 'UTC' })
+    assert.ok(!r.added.includes('about-me.md'))
+    assert.ok(!existsSync(join(dir, 'about-me.md')))
+    assert.match(
+      await readFile(join(dir, 'my-rules.md'), 'utf8'),
+      /^---\ntimezone: UTC\n---\n# My rules for this workspace/,
+    )
   })
 })

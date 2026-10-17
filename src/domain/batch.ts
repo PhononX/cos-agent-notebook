@@ -7,6 +7,7 @@ import {
   ARCHIVE_PATH,
   LOG_PATH,
   newNoteLines,
+  PERSONAL_ONLY_FILES,
   noteName,
   noteType,
   pathProblem,
@@ -167,6 +168,12 @@ export class Batch {
   checkWritable(path: string, opts: { allowLog?: boolean; allowArchive?: boolean } = {}): void {
     const problem = pathProblem(path)
     if (problem) throw new NotebookError('invalid_value', `The path "${path}" ${problem}.`)
+    if (this.notebook.space.kind === 'workspace' && PERSONAL_ONLY_FILES.includes(path)) {
+      throw new NotebookError(
+        'invalid_value',
+        `${path} describes the person and travels with them, so it lives only in their personal notebook. Write it there.`,
+      )
+    }
     if (path === 'my-rules.md' && !hasScope(this.actor, 'rules:write')) {
       throw new NotebookError(
         'forbidden',
@@ -201,7 +208,7 @@ export class Batch {
   ensureNote(path: string, lines?: readonly string[]): Note {
     const existing = this.copy.note(path)
     if (existing) return existing
-    const initial = lines ?? newNoteLines(path)
+    const initial = lines ?? newNoteLines(path, this.notebook.space.kind)
     this.record(path, [], [...initial])
     return this.copy.create(path, initial)
   }

@@ -12,6 +12,8 @@ import {
   logPath,
   namedNotePath,
   newNoteLines,
+  PERSONAL_ONLY_SECTIONS,
+  PERSONAL_ONLY_SETTINGS,
   noteType,
   pathProblem,
   type NamedNoteType,
@@ -613,8 +615,18 @@ function frontMatterValues(
         `"${k}" isn't a front matter key: use lowercase letters, digits and _.`,
       )
     }
-    // Removing a same_as is always allowed, so a stray one in a work notebook can be cleaned up.
+    // Removing is always allowed, so a stray value in a work notebook can be cleaned up.
     if (v === null) return [k, null]
+    if (
+      type === 'my-rules' &&
+      b.notebook.space.kind === 'workspace' &&
+      PERSONAL_ONLY_SETTINGS.includes(k)
+    ) {
+      throw new NotebookError(
+        'invalid_value',
+        `${k} is the person's own preference, so it's set in their personal notebook's my-rules.md, not a work notebook's.`,
+      )
+    }
     if (k === 'same_as') checkSameAsAllowed(b)
     const value = checkText(String(v), k, k === 'same_as' ? SAME_AS_MAX_CHARS : 300)
     const problem = frontMatterProblem(type, k, value)
@@ -939,6 +951,16 @@ async function rule(b: Batch, op: OperationOf<'rule'>): Promise<void> {
   if (op.file !== undefined && op.file !== path) {
     throw new NotebookError('invalid_value', 'Rules live in my-rules.md.')
   }
+  const personalOnly = (section: string | undefined) =>
+    b.notebook.space.kind === 'workspace' &&
+    section !== undefined &&
+    PERSONAL_ONLY_SECTIONS.some((p) => p.toLowerCase() === section.toLowerCase())
+  if (personalOnly(op.section)) {
+    throw new NotebookError(
+      'invalid_value',
+      `"${op.section}" is the person's own, so it lives in their personal notebook's my-rules.md, not a work notebook's.`,
+    )
+  }
   b.ensureNote(path)
   const changed: string[] = []
   if (op.settings) {
@@ -953,6 +975,12 @@ async function rule(b: Batch, op: OperationOf<'rule'>): Promise<void> {
       { ...op, file: path },
       { reject: (i) => (i.path !== path ? "isn't in my-rules.md" : null) },
     )
+    if (personalOnly(item.section.at(-1))) {
+      throw new NotebookError(
+        'invalid_value',
+        `Item ${item.id} is under "${item.section.at(-1)}", which belongs in the personal notebook. Change it there.`,
+      )
+    }
     requireFitting(item, b)
     let fields = [...item.fields]
     if (op.replaces !== undefined)

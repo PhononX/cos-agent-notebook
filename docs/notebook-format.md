@@ -415,7 +415,28 @@ Settings:
 `brief_time` and `brief_days` in its front matter and no "My briefs" section; that means a single
 "Morning brief" at that time on those days.
 
-**about-me.md**
+In a **work notebook**, `my-rules.md` holds only what is specific to that workspace: "Where things
+go", "Important people" and "My tools" (and other rules about working there), with `timezone` as
+its only setting. The other settings and "My briefs" are the person's own preferences and live in
+their personal notebook. An agent combines them: the defaults, then the personal `my-rules.md`,
+then the work notebook's, whose rules win in that workspace.
+```
+---
+timezone: Europe/Berlin
+---
+# My rules for this workspace
+
+## Where things go
+- Team tasks live in Linear. Point to them; don't copy them [src:: cv 2026-10-13]
+
+## Important people
+- [[Jordan Kim]]: anything from him, always [src:: onboarding 2026-10-01]
+
+## My tools
+- Documents: Google Docs, in the "Northwind" folder [for:: doc] [src:: cv 2026-10-12]
+```
+
+**about-me.md** is only in the personal notebook: it describes the person, and travels with them.
 ```
 # About me
 

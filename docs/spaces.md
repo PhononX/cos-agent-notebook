@@ -62,6 +62,19 @@ personal text) is a hint, never the decision. Don't guess, and don't file it in 
   employment agreements treat them. Unrelated ideas are yours.
 - **Calendar:** work meetings at work, personal appointments personal.
 
+## Files by space
+
+| File | Personal notebook | Work notebook |
+|---|---|---|
+| `about-me.md` | Yes: who you are and how you write, including at work | No |
+| `my-rules.md` | Your preferences: briefs, nudges, meeting prep, voice, time zone, which space things go in | Only that workspace's: where things go there, important people there, tools there, and its time zone |
+| `sources.md` | Your personal channels | That workspace's channels |
+| People | Everyone, as full records or short entries with `same_as` | That workspace's people |
+| Everything else (actions, waiting, ideas, decisions, projects, drafts, today's files, log, archive) | Your own | That workspace's |
+
+The profile an agent works with combines them: the defaults, then your personal notebook, then the
+rules of the work notebook it's working in.
+
 ## People in both
 
 The personal notebook has a note for everyone the person deals with in any space. For a colleague

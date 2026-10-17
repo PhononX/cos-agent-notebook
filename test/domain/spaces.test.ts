@@ -515,3 +515,106 @@ describe('unified reads', () => {
     assert.equal((await refusal(service.listItems([]))).code, 'invalid_request')
   })
 })
+
+describe('what lives only in the personal notebook', () => {
+  it('a work notebook starts without about-me.md, with a workspace-only my-rules.md', async () => {
+    const { store } = await twoNotebooks()
+    assert.equal(await store.read(work, 'about-me.md'), null)
+    assert.equal(
+      await store.read(work, 'my-rules.md'),
+      '---\ntimezone: UTC\n---\n# My rules for this workspace\n\n## Where things go\n\n## Important people\n\n## My tools\n',
+    )
+    assert.match(
+      (await store.read(personal, 'my-rules.md'))!,
+      /nudges_per_day: 3\nstale_days: 30\nmeeting_prep: offer/,
+    )
+    assert.match((await store.read(personal, 'about-me.md'))!, /^# About me/)
+  })
+
+  it("refuses the person's own files, settings and briefs in a work notebook", async () => {
+    const { service } = await twoNotebooks()
+    const tryWork = (op: Record<string, unknown>) =>
+      refusal(service.applyChanges(work, { operations: [op] }, AGENT))
+    assert.match(
+      (
+        await tryWork({
+          op: 'note',
+          file: 'about-me.md',
+          section: 'Learned',
+          append: ['Likes walks'],
+        })
+      ).message,
+      /lives only in their personal notebook/,
+    )
+    assert.match(
+      (await tryWork({ op: 'rule', settings: { nudges_per_day: 1 } })).message,
+      /own preference/,
+    )
+    assert.match(
+      (
+        await tryWork({
+          op: 'rule',
+          section: 'My briefs',
+          text: 'Morning brief',
+          fields: { at: '07:00' },
+        })
+      ).message,
+      /personal notebook/,
+    )
+    // What belongs to the workspace is fine.
+    const ok = await service.applyChanges(
+      work,
+      {
+        operations: [
+          { op: 'rule', section: 'Where things go', text: 'Team tasks live in Linear' },
+          { op: 'rule', settings: { timezone: 'Europe/Berlin' } },
+        ],
+      },
+      AGENT,
+    )
+    assert.equal(ok.results[0]!.status, 'updated')
+  })
+
+  it('combines the profile: defaults, then personal, then the work notebook', async () => {
+    const { service } = await twoNotebooks()
+    await service.applyChanges(
+      personal,
+      {
+        operations: [
+          { op: 'rule', settings: { nudges_per_day: 1, timezone: 'America/New_York' } },
+          { op: 'rule', text: 'No exclamation marks in anything I send' },
+          { op: 'note', file: 'about-me.md', section: 'How I write', append: ['Short and direct'] },
+        ],
+      },
+      AGENT,
+    )
+    await service.applyChanges(
+      work,
+      {
+        operations: [
+          { op: 'rule', section: 'My tools', text: 'Documents go in the Northwind shared drive' },
+          { op: 'rule', settings: { timezone: 'Europe/Berlin' } },
+        ],
+      },
+      AGENT,
+    )
+    const atHome = await service.profile(personal)
+    assert.equal(atHome.timezone, 'America/New_York')
+    assert.deepEqual(atHome.settings, { nudges_per_day: 1, stale_days: 30, meeting_prep: 'offer' })
+    assert.deepEqual(
+      atHome.about_me.map((l) => [l.section, l.text]),
+      [['How I write', 'Short and direct']],
+    )
+    const atWork = await service.profile(personal, work)
+    assert.equal(atWork.timezone, 'Europe/Berlin')
+    assert.deepEqual(
+      atWork.rules.map((r) => [r.notebook, r.section, r.text]),
+      [
+        ['personal:alex:default', 'My rules', 'No exclamation marks in anything I send'],
+        ['workspace:northwind:alex', 'My tools', 'Documents go in the Northwind shared drive'],
+      ],
+    )
+    await assert.rejects(service.profile(work), /personal notebook/)
+    await assert.rejects(service.profile(personal, personal), /work notebook/)
+  })
+})

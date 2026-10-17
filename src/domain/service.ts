@@ -9,7 +9,8 @@ import {
 } from '../format/front-matter.ts'
 import { CHANGE_ID, newChangeId } from '../format/ids.ts'
 import {
-  STARTER_FILES,
+  starterFiles,
+  type SpaceKind,
   logPath,
   newNoteLines,
   noteName,
@@ -76,6 +77,32 @@ export interface ApplyChangesResult {
   new_names: string[]
   files: FileSummary[]
   warnings: Warning[]
+}
+
+/** Settings that are the person's own preferences, before their my-rules.md changes them. */
+export const DEFAULT_SETTINGS = {
+  nudges_per_day: 3,
+  stale_days: 30,
+  meeting_prep: 'offer',
+} as const
+
+export interface ProfileLine extends CompactItem {
+  /** The heading the line sits under, like "How I write" or "Where things go". */
+  section: string
+}
+
+export interface Profile {
+  /** The time zone of the notebook being worked in. */
+  timezone: string
+  /** The person's own preferences: defaults, changed by their personal my-rules.md. */
+  settings: { nudges_per_day: number; stale_days: number; meeting_prep: string }
+  /** about-me.md from the personal notebook. */
+  about_me: ProfileLine[]
+  /**
+   * Rules, the personal notebook's first, then the work notebook's. In that workspace its own
+   * rules win where they differ.
+   */
+  rules: ProfileLine[]
 }
 
 export interface AdoptResult {
@@ -161,7 +188,9 @@ export class NotebookService {
       await this.store.create(notebook)
       await this.history.init(notebook)
       const copy = WorkingCopy.fromTexts(new Map())
-      for (const path of STARTER_FILES) copy.create(path, starterLines(path, timezone))
+      for (const path of starterFiles(notebook.space.kind)) {
+        copy.create(path, starterLines(path, timezone, notebook.space.kind))
+      }
       const now = zonedNow(this.clock.now(), timezone)
       const changeId = newChangeId()
       const files = await this.commit(notebook, copy, {
@@ -258,9 +287,9 @@ export class NotebookService {
 
       // 2. What the notebook needs to work: starter files, and the time zone.
       const added: string[] = []
-      for (const path of STARTER_FILES) {
+      for (const path of starterFiles(notebook.space.kind)) {
         if (copy.has(path)) continue
-        copy.create(path, starterLines(path, timezone))
+        copy.create(path, starterLines(path, timezone, notebook.space.kind))
         added.push(path)
       }
       const rules = copy.note('my-rules.md')!
@@ -325,6 +354,65 @@ export class NotebookService {
       items: note.items.map((i) => compactItem(i, notebook)),
       problems: note.problems.map(({ line, message }) => ({ line, message })),
       text,
+    }
+  }
+
+  /**
+   * The profile an agent loads to work for the person: the defaults, then the personal
+   * notebook's about-me.md and my-rules.md, then (when working in a workspace) that work
+   * notebook's my-rules.md. A read across the person's notebooks; nothing combined is stored.
+   */
+  async profile(personal: NotebookRef, work?: NotebookRef): Promise<Profile> {
+    checkRef(personal)
+    if (personal.space.kind !== 'personal') {
+      throw new NotebookError(
+        'invalid_value',
+        'A profile starts from a personal notebook; pass one first.',
+      )
+    }
+    if (work !== undefined) {
+      checkRef(work)
+      if (work.space.kind !== 'workspace') {
+        throw new NotebookError(
+          'invalid_value',
+          'The second notebook of a profile is a work notebook.',
+        )
+      }
+    }
+    const read = async (nb: NotebookRef, path: string) => {
+      const text = await this.store.read(nb, path)
+      return text === null ? null : parseNote(path, text)
+    }
+    await this.requireNotebook(personal)
+    if (work) await this.requireNotebook(work)
+    const aboutMe = await read(personal, 'about-me.md')
+    const personalRules = await read(personal, 'my-rules.md')
+    const workRules = work ? await read(work, 'my-rules.md') : null
+
+    const fm = personalRules?.frontMatter ?? null
+    const count = (key: string, fallback: number) => {
+      const v = frontMatterValue(fm, key)
+      return v !== undefined && /^\d+$/.test(v) ? Number(v) : fallback
+    }
+    const prep = frontMatterValue(fm, 'meeting_prep')
+    const zone = (note: typeof personalRules) => {
+      const tz = frontMatterValue(note?.frontMatter ?? null, 'timezone')
+      return tz !== undefined && isTimeZone(tz) ? tz : undefined
+    }
+    const lines = (note: typeof personalRules, nb: NotebookRef): ProfileLine[] =>
+      (note?.items ?? []).map((i) => ({ ...compactItem(i, nb), section: i.section.at(-1) ?? '' }))
+    return {
+      timezone: (work ? zone(workRules) : undefined) ?? zone(personalRules) ?? this.defaultTimezone,
+      settings: {
+        nudges_per_day: count('nudges_per_day', DEFAULT_SETTINGS.nudges_per_day),
+        stale_days: count('stale_days', DEFAULT_SETTINGS.stale_days),
+        meeting_prep:
+          prep !== undefined && ['offer', 'auto', 'off'].includes(prep)
+            ? prep
+            : DEFAULT_SETTINGS.meeting_prep,
+      },
+      about_me: lines(aboutMe, personal),
+      rules: [...lines(personalRules, personal), ...(work ? lines(workRules, work) : [])],
     }
   }
 
@@ -834,15 +922,21 @@ function errorName(e: unknown): string {
   return e instanceof Error ? e.name : 'unknown'
 }
 
-/** The lines a starter file begins with; my-rules.md gets the default settings. */
-function starterLines(path: string, timezone: string): string[] {
-  const lines = newNoteLines(path)
+/**
+ * The lines a starter file begins with. A personal my-rules.md gets the default settings; a
+ * work notebook's gets only its time zone, since the other settings are the person's own.
+ */
+function starterLines(path: string, timezone: string, space: SpaceKind): string[] {
+  const lines = newNoteLines(path, space)
   if (path !== 'my-rules.md') return lines
-  const settings: [string, string][] = [
-    ['timezone', timezone],
-    ['nudges_per_day', '3'],
-    ['stale_days', '30'],
-    ['meeting_prep', 'offer'],
-  ]
+  const settings: [string, string][] =
+    space === 'workspace'
+      ? [['timezone', timezone]]
+      : [
+          ['timezone', timezone],
+          ['nudges_per_day', String(DEFAULT_SETTINGS.nudges_per_day)],
+          ['stale_days', String(DEFAULT_SETTINGS.stale_days)],
+          ['meeting_prep', DEFAULT_SETTINGS.meeting_prep],
+        ]
   return ['---', ...settings.map(([k, v]) => renderFrontMatterEntry(k, v)), '---', ...lines]
 }

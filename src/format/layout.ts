@@ -176,8 +176,9 @@ export function logPath(date: string): string {
 }
 
 /** The lines a note starts with when the service creates it. */
-export function newNoteLines(path: string): string[] {
+export function newNoteLines(path: string, space: SpaceKind = 'personal'): string[] {
   const t = noteType(path)
+  if (t === 'my-rules' && space === 'workspace') return [...WORK_RULES_TEMPLATE]
   const m = ARCHIVE_PATH.exec(path)
   if (m) {
     const [y, mo] = m[1]!.split('-')
@@ -240,7 +241,41 @@ const NOTE_TEMPLATES: Partial<Record<NoteType, readonly string[]>> = {
   sources: ['# Where I talk'],
 }
 
-/** The files `cos-notebook init` creates, in order. */
+/** Which kind of space a notebook is in. Some files and settings belong to the person only. */
+export type SpaceKind = 'personal' | 'workspace'
+
+/** Files that describe the person and travel with them: only in the personal notebook. */
+export const PERSONAL_ONLY_FILES: readonly string[] = ['about-me.md']
+
+/** my-rules.md settings that are the person's preferences: only in the personal notebook. */
+export const PERSONAL_ONLY_SETTINGS: readonly string[] = [
+  'nudges_per_day',
+  'stale_days',
+  'meeting_prep',
+  'brief_time',
+  'brief_days',
+]
+
+/** my-rules.md sections that are the person's own: only in the personal notebook. */
+export const PERSONAL_ONLY_SECTIONS: readonly string[] = ['My briefs']
+
+/** A work notebook's my-rules.md holds only what is specific to that workspace. */
+const WORK_RULES_TEMPLATE = [
+  '# My rules for this workspace',
+  '',
+  '## Where things go',
+  '',
+  '## Important people',
+  '',
+  '## My tools',
+]
+
+/** The files a new notebook starts with, in order. */
+export function starterFiles(space: SpaceKind): string[] {
+  return STARTER_FILES.filter((f) => space === 'personal' || !PERSONAL_ONLY_FILES.includes(f))
+}
+
+/** The files a new personal notebook starts with, in order. */
 export const STARTER_FILES = [
   'now.md',
   'catch-up.md',

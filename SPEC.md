@@ -201,7 +201,12 @@ history: someone in two workspaces has three notebooks, one per space, kept apar
   `my-rules.md`), likely duplicates (normalized text similarity), ideas mentioned several times,
   waiting items never nudged, actions past due.
 - **Profile.** Combine the defaults, `about-me.md` and `my-rules.md` (rules win) into one
-  profile that agents load at the start of a session.
+  profile that agents load at the start of a session. `about-me.md` and the person's preferences
+  (`nudges_per_day`, `stale_days`, `meeting_prep`, "My briefs") live only in the personal
+  notebook; a work notebook's `my-rules.md` holds only that workspace's rules (where things go,
+  important people, tools) and its `timezone`, and the service refuses the rest there. Working in
+  a workspace, the profile is the defaults, then the personal notebook, then that work
+  notebook's rules, which win in that workspace.
 - **Time zone.** Each notebook has a time zone (`timezone` in `my-rules.md` front matter;
   local mode defaults to the computer's). "Today", "overdue", "stale" and which daily log a
   change goes in are all computed in that zone.
