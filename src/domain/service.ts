@@ -30,6 +30,7 @@ import {
 } from './batch.ts'
 import { cleanName, renderChecked } from './compose.ts'
 import { NotebookError } from './errors.ts'
+import { setFrontMatterLines } from './front-matter-edit.ts'
 import { checkRef, formatRef } from './notebook-ref.ts'
 import { runOperation } from './operations.ts'
 import {
@@ -74,6 +75,21 @@ export interface ApplyChangesResult {
   results: OpResult[]
   new_names: string[]
   files: FileSummary[]
+  warnings: Warning[]
+}
+
+export interface AdoptResult {
+  change_id: string
+  /** How many notes the folder had. */
+  notes: number
+  /** Starter files that were missing and were added. */
+  added: string[]
+  timezone: string
+  /** Lines that don't fit the format, left as they are (the first 100). */
+  problem_count: number
+  problems: { path: string; line: number; message: string }[]
+  /** Notes the format doesn't define, kept and read as free notes. */
+  other_notes: string[]
   warnings: Warning[]
 }
 
@@ -139,30 +155,13 @@ export class NotebookService {
       if ((await this.store.exists(notebook)) && (await this.store.list(notebook)).length > 0) {
         throw new NotebookError(
           'conflict',
-          'This folder already has notes in it, so nothing was changed. Choose an empty or new folder.',
+          'This folder already has notes in it, so nothing was changed. To make a notebook of the notes as they are, adopt the folder (cos-notebook adopt); otherwise choose an empty or new folder.',
         )
       }
       await this.store.create(notebook)
       await this.history.init(notebook)
       const copy = WorkingCopy.fromTexts(new Map())
-      for (const path of STARTER_FILES) {
-        let lines = newNoteLines(path)
-        if (path === 'my-rules.md') {
-          const settings: [string, string][] = [
-            ['timezone', timezone],
-            ['nudges_per_day', '3'],
-            ['stale_days', '30'],
-            ['meeting_prep', 'offer'],
-          ]
-          lines = [
-            '---',
-            ...settings.map(([k, v]) => renderFrontMatterEntry(k, v)),
-            '---',
-            ...lines,
-          ]
-        }
-        copy.create(path, lines)
-      }
+      for (const path of STARTER_FILES) copy.create(path, starterLines(path, timezone))
       const now = zonedNow(this.clock.now(), timezone)
       const changeId = newChangeId()
       const files = await this.commit(notebook, copy, {
@@ -177,6 +176,130 @@ export class NotebookService {
         files: files.length,
       })
       return { change_id: changeId, files: files.map((f) => f.path) }
+    })
+  }
+
+  /**
+   * Makes a notebook of a folder that already has notes, such as one kept by the Chief of Staff
+   * plugin, where it is. History starts with the notes exactly as they were (one change, nothing
+   * rewritten); then the missing starter files and the time zone setting are added as a second
+   * change. Lines that don't fit the format are reported, never changed. A folder that already has
+   * history keeps it.
+   */
+  async adopt(
+    notebook: NotebookRef,
+    opts: { actor: Actor; timezone?: string },
+  ): Promise<AdoptResult> {
+    checkRef(notebook)
+    const actor = checkActor(opts.actor)
+    if (opts.timezone !== undefined && !isTimeZone(opts.timezone)) {
+      throw new NotebookError(
+        'invalid_value',
+        `"${opts.timezone}" isn't a time zone; use an IANA name like Europe/Berlin.`,
+      )
+    }
+    return this.lock.run(notebook, async () => {
+      if (!(await this.store.exists(notebook)) || !(await this.store.list(notebook)).length) {
+        throw new NotebookError(
+          'not_found',
+          'There are no notes here to adopt. Start a new notebook instead (cos-notebook init).',
+        )
+      }
+      const state = await this.history.state(notebook)
+      if (state.notebook) {
+        throw new NotebookError(
+          'conflict',
+          'This folder is already a notebook; nothing was changed.',
+        )
+      }
+      await this.history.init(notebook)
+      const warnings: Warning[] = []
+      if (state.insideAnotherRepository) {
+        warnings.push({
+          code: 'inside_another_repository',
+          message:
+            'The folder was inside another git repository. The notebook now has its own history in the folder; the outer repository should ignore it.',
+        })
+      }
+      if (state.existingHistory) {
+        warnings.push({
+          code: 'existing_history',
+          message:
+            'The folder already had git history; it was kept, and the notebook continues it.',
+        })
+      }
+
+      // 1. The notes exactly as they were.
+      const asTheyWere = (await this.history.outsideChanges(notebook)).filter(
+        (p) => !pathProblem(p),
+      )
+      let copy = await WorkingCopy.load(this.store, notebook)
+      const set = frontMatterValue(copy.note('my-rules.md')?.frontMatter ?? null, 'timezone')
+      const timezone =
+        set !== undefined && isTimeZone(set) ? set : (opts.timezone ?? this.defaultTimezone)
+      if (set !== undefined && !isTimeZone(set)) {
+        warnings.push({
+          code: 'timezone_invalid',
+          message: `my-rules.md sets timezone to something that isn't a time zone, so it was left as it is and ${timezone} is used. Fix it with rule and settings.timezone.`,
+        })
+      }
+      const now = zonedNow(this.clock.now(), timezone)
+      if (asTheyWere.length) {
+        await this.commit(notebook, copy, {
+          changeId: newChangeId(),
+          summary: `Notes as they were when the notebook was adopted (${asTheyWere.length})`,
+          by: OUTSIDE,
+          now,
+          logLine: false,
+          alsoRecord: asTheyWere,
+        })
+        copy = await WorkingCopy.load(this.store, notebook)
+      }
+
+      // 2. What the notebook needs to work: starter files, and the time zone.
+      const added: string[] = []
+      for (const path of STARTER_FILES) {
+        if (copy.has(path)) continue
+        copy.create(path, starterLines(path, timezone))
+        added.push(path)
+      }
+      const rules = copy.note('my-rules.md')!
+      if (set === undefined && !added.includes('my-rules.md')) {
+        const edit = setFrontMatterLines(rules, 'timezone', timezone)
+        copy.splice('my-rules.md', edit.start, edit.count, edit.lines)
+      }
+      const notes = copy.paths().length - added.length
+      const problems = copy.paths().flatMap((p) => copy.note(p)!.problems)
+      const other = copy.paths().filter((p) => copy.note(p)!.type === 'other')
+      const parts = [`${notes} notes`]
+      if (added.length) parts.push(`added ${added.join(', ')}`)
+      if (set === undefined) parts.push(`timezone ${timezone}`)
+      const changeId = newChangeId()
+      await this.commit(notebook, copy, {
+        changeId,
+        summary: `Adopted the notebook (${parts.join('; ')})`,
+        by: byActor(actor),
+        now,
+      })
+      this.logger.info('notebook_adopted', {
+        notebook: formatRef(notebook),
+        change_id: changeId,
+        notes,
+        added: added.length,
+        problems: problems.length,
+      })
+      return {
+        change_id: changeId,
+        notes,
+        added,
+        timezone,
+        problem_count: problems.length,
+        problems: problems
+          .slice(0, 100)
+          .map(({ path, line, message }) => ({ path, line, message })),
+        other_notes: other,
+        warnings,
+      }
     })
   }
 
@@ -709,4 +832,17 @@ function stableJson(value: unknown): string {
 function errorName(e: unknown): string {
   if (e && typeof e === 'object' && 'code' in e && typeof e.code === 'string') return e.code
   return e instanceof Error ? e.name : 'unknown'
+}
+
+/** The lines a starter file begins with; my-rules.md gets the default settings. */
+function starterLines(path: string, timezone: string): string[] {
+  const lines = newNoteLines(path)
+  if (path !== 'my-rules.md') return lines
+  const settings: [string, string][] = [
+    ['timezone', timezone],
+    ['nudges_per_day', '3'],
+    ['stale_days', '30'],
+    ['meeting_prep', 'offer'],
+  ]
+  return ['---', ...settings.map(([k, v]) => renderFrontMatterEntry(k, v)), '---', ...lines]
 }

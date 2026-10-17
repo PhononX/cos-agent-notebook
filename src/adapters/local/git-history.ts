@@ -3,10 +3,17 @@
 // being rewritten by retention.
 
 import { execFile } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Author, ChangeRecord, History, NotebookRef } from '../../domain/ports.ts'
+import type {
+  Author,
+  ChangeRecord,
+  History,
+  HistoryState,
+  NotebookRef,
+} from '../../domain/ports.ts'
 import type { DirFor } from './fs-store.ts'
 import { STATE_DIR } from './file-idempotency.ts'
 
@@ -74,12 +81,41 @@ export class GitHistory implements History {
     this.dirFor = dirFor
   }
 
+  /** Starts a repository in the notebook's own folder, or reuses one already there. */
   async init(notebook: NotebookRef): Promise<void> {
     const dir = this.dirFor(notebook)
-    await git(['init', '-q', '-b', 'main'], { cwd: dir })
+    const own = (await this.state(notebook)).existingHistory || existsSync(join(dir, '.git'))
+    if (!own) await git(['init', '-q', '-b', 'main'], { cwd: dir })
     // The service's own state never goes into history.
+    const exclude = join(dir, '.git', 'info', 'exclude')
     await mkdir(join(dir, '.git', 'info'), { recursive: true })
-    await writeFile(join(dir, '.git', 'info', 'exclude'), `${STATE_DIR}/\n`)
+    const current = existsSync(exclude) ? await readFile(exclude, 'utf8') : ''
+    if (!current.split('\n').includes(`${STATE_DIR}/`)) {
+      await writeFile(
+        exclude,
+        `${current}${current && !current.endsWith('\n') ? '\n' : ''}${STATE_DIR}/\n`,
+      )
+    }
+  }
+
+  async state(notebook: NotebookRef): Promise<HistoryState> {
+    const dir = this.dirFor(notebook)
+    const top = await git(['rev-parse', '--show-toplevel'], { cwd: dir, allowFail: true })
+    if (top.code !== 0)
+      return { notebook: false, existingHistory: false, insideAnotherRepository: false }
+    const own = (await realpath(top.stdout.toString('utf8').trim())) === (await realpath(dir))
+    if (!own) return { notebook: false, existingHistory: false, insideAnotherRepository: true }
+    const head = await git(['rev-parse', '--verify', '-q', 'HEAD'], { cwd: dir, allowFail: true })
+    if (head.code !== 0)
+      return { notebook: false, existingHistory: false, insideAnotherRepository: false }
+    const ours = await git(['log', '-1', '--format=%H', `--grep=^${TRAILER}: `, 'HEAD'], {
+      cwd: dir,
+    })
+    return {
+      notebook: ours.stdout.toString('utf8').trim() !== '',
+      existingHistory: true,
+      insideAnotherRepository: false,
+    }
   }
 
   async commit(
@@ -117,7 +153,7 @@ export class GitHistory implements History {
     const cwd = this.dirFor(notebook)
     if (!/^ch_[0-9a-z]{8}$/.test(changeId)) return null
     const found = await git(
-      ['log', '-1', '--format=%H', `--grep=^${TRAILER}: ${changeId}$`, 'main'],
+      ['log', '-1', '--format=%H', `--grep=^${TRAILER}: ${changeId}$`, 'HEAD'],
       {
         cwd,
         allowFail: true,
@@ -175,7 +211,7 @@ export class GitHistory implements History {
     changes: number,
   ): Promise<{ path: string; content: string }[]> {
     const cwd = this.dirFor(notebook)
-    const out = await git(['log', `-n${changes}`, '--format=%H', '--name-only', 'main'], {
+    const out = await git(['log', `-n${changes}`, '--format=%H', '--name-only', 'HEAD'], {
       cwd,
       allowFail: true,
     })

@@ -32,7 +32,8 @@ Milestone 1 of 7 (format and domain core) is done:
   before the next write.
 - Personal and workspace notebooks: every call names one notebook by its space, and each space
   is stored apart (see "Personal and workspace notebooks" in `SPEC.md`).
-- `cos-notebook init`.
+- `cos-notebook init`, and `cos-notebook adopt` for a folder that already has notes (such as a
+  Chief of Staff plugin `cos/` folder).
 
 The HTTP API, MCP tools and the rest of the CLI arrive in milestone 2; see the milestones in
 `SPEC.md`.
@@ -51,6 +52,15 @@ npm run cli -- init ~/cos-notebook --timezone Europe/Berlin
 
 This creates the notebook's starter files, a git repository for its history, and the first
 change. Open the folder in any editor or as an Obsidian vault.
+
+Already have notes, for example from the Chief of Staff plugin? Adopt the folder where it is:
+
+```sh
+npm run cli -- adopt path/to/cos
+```
+
+Nothing is rewritten. History starts with the notes as they are, missing starter files and the
+time zone are added as a second change, and lines that don't fit the format are listed.
 
 From code (milestone 2 puts MCP and HTTP in front of the same calls):
 

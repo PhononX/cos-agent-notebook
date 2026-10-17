@@ -45,9 +45,20 @@ export interface ChangeRecord {
   files: FileVersion[]
 }
 
+export interface HistoryState {
+  /** History already holds changes made by this service: the folder is a notebook. */
+  notebook: boolean
+  /** The folder already has history of its own (made before the service, by hand or a tool). */
+  existingHistory: boolean
+  /** The folder has no history of its own but sits inside another repository. */
+  insideAnotherRepository: boolean
+}
+
 /** The notebook's history: one entry per change. */
 export interface History {
+  /** Starts history for the notebook, or reuses history its folder already has. */
   init(notebook: NotebookRef): Promise<void>
+  state(notebook: NotebookRef): Promise<HistoryState>
   /** Records the given paths as they are now in the store, as one change. */
   commit(
     notebook: NotebookRef,

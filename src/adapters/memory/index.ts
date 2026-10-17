@@ -104,6 +104,15 @@ export class MemoryHistory implements History {
     return record
   }
 
+  async state(notebook: NotebookRef) {
+    const commits = this.commits.get(notebookKey(notebook))
+    return {
+      notebook: (commits?.length ?? 0) > 0,
+      existingHistory: false,
+      insideAnotherRepository: false,
+    }
+  }
+
   async outsideChanges(notebook: NotebookRef) {
     const key = notebookKey(notebook)
     const last = this.commits.get(key)?.at(-1)?.snapshot ?? this.baseline.get(key) ?? new Map()

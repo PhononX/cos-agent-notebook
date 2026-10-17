@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
@@ -46,5 +46,23 @@ describe('cos-notebook', () => {
     const later = run(['serve'])
     assert.equal(later.status, 2)
     assert.match(later.stderr, /milestone 2/)
+  })
+})
+
+describe('cos-notebook adopt', () => {
+  it('adopts a folder and reports what it found', async () => {
+    const dir = await tempDir()
+    writeFileSync(join(dir, 'inbox.md'), '# Inbox\n\n- [src:: cv 2026-10-14] Fields first\n')
+    const r = run(['adopt', dir, '--timezone', 'UTC'])
+    assert.equal(r.status, 0, r.stderr)
+    assert.match(r.stdout, /^Adopted .*: 1 notes, time zone UTC \(change ch_[0-9a-z]{8}\)\.\n/)
+    assert.match(r.stdout, /Added missing files: now\.md/)
+    assert.match(
+      r.stdout,
+      /1 lines don't fit the format; they were left as they are:\n  inbox\.md:3 Fields should come after the sentence\./,
+    )
+    assert.equal(run(['adopt', dir]).status, 1)
+    const init = run(['init', join(dir)])
+    assert.match(init.stderr, /adopt the folder/)
   })
 })

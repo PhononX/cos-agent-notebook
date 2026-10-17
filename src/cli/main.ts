@@ -12,6 +12,7 @@ const HELP = `cos-notebook: the Chief of Staff notebook service
 
 Usage:
   cos-notebook init [folder] [--timezone <zone>]   Start a notebook (default folder: $COS_NOTEBOOK_DIR or ~/cos-notebook)
+  cos-notebook adopt [folder] [--timezone <zone>]  Make a notebook of a folder that already has notes, as they are
   cos-notebook --version                          Print the version
   cos-notebook --help                             Show this help
 
@@ -61,6 +62,44 @@ async function init(args: string[]): Promise<number> {
   return 0
 }
 
+async function adopt(args: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args,
+    options: { timezone: { type: 'string' }, help: { type: 'boolean', short: 'h' } },
+    allowPositionals: true,
+  })
+  if (values.help) {
+    console.log(
+      "Usage: cos-notebook adopt [folder] [--timezone <zone>]\n\nMakes a notebook of a folder that already has notes (such as a Chief of Staff plugin cos/ folder), where it is. Nothing is rewritten: history starts with the notes as they are, then missing starter files and the time zone are added. --timezone is used only if my-rules.md doesn't set one.",
+    )
+    return 0
+  }
+  if (positionals.length > 1) throw new UsageError('adopt takes at most one folder.')
+  const config = loadConfig()
+  const dir = positionals[0] ? resolve(positionals[0]) : config.dir
+  const service = createLocalService({
+    dir,
+    defaultTimezone: config.timezone,
+    logger: new JsonLogger({ quiet: true }),
+  })
+  const r = await service.adopt(LOCAL_NOTEBOOK, {
+    actor: { client: 'cli' },
+    ...(values.timezone ? { timezone: values.timezone } : {}),
+  })
+  console.log(`Adopted ${dir}: ${r.notes} notes, time zone ${r.timezone} (change ${r.change_id}).`)
+  if (r.added.length) console.log(`Added missing files: ${r.added.join(', ')}.`)
+  if (r.other_notes.length) {
+    console.log(`Kept ${r.other_notes.length} notes the format doesn't define, as free notes.`)
+  }
+  if (r.problem_count) {
+    console.log(`${r.problem_count} lines don't fit the format; they were left as they are:`)
+    for (const p of r.problems.slice(0, 10)) console.log(`  ${p.path}:${p.line} ${p.message}`)
+    if (r.problem_count > 10) console.log(`  …and ${r.problem_count - 10} more.`)
+  }
+  for (const w of r.warnings) console.log(w.message)
+  return 0
+}
+
 class UsageError extends Error {}
 
 async function main(argv: string[]): Promise<number> {
@@ -74,6 +113,7 @@ async function main(argv: string[]): Promise<number> {
     return 0
   }
   if (command === 'init') return init(rest)
+  if (command === 'adopt') return adopt(rest)
   if (LATER[command]) {
     console.error(`cos-notebook ${command} isn't available yet: it comes with ${LATER[command]}.`)
     return 2

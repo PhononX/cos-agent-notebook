@@ -221,6 +221,13 @@ history: someone in two workspaces has three notebooks, one per space, kept apar
 - **Purge:** remove a file or an item, or replace text, across all history (for example, a password
   captured by mistake), then the same cleanup as step 4.
 - **Delete notebook:** removes the repository, derived indexes and any cached copies.
+- **Adopt:** makes a notebook of a folder that already has notes (such as a Chief of Staff plugin
+  `cos/` folder), where it is. History starts with the notes exactly as they were, as one change
+  authored "outside the service"; then a second change adds missing starter files and the
+  `timezone` setting if absent. Nothing is rewritten: lines that don't fit the format are
+  reported, notes the format doesn't define are kept as free notes, files that aren't notes are
+  left alone. A folder with git history of its own keeps it (on whatever branch); a folder inside
+  another repository gets its own. A folder that is already a notebook is refused.
 
 ### Search
 
@@ -470,6 +477,7 @@ Hosting also needs these properties throughout the code:
 - Repository and package name: `cos-agent-notebook` (published to npm, so installers can fetch
   it). The command it installs is `cos-notebook`.
 - One CLI: `cos-notebook serve`, `cos-notebook mcp` (stdio), `cos-notebook sync`, `cos-notebook init`,
+  `cos-notebook adopt`,
   `cos-notebook token create|list|revoke`, `cos-notebook retention run`, `cos-notebook export`.
 
 ## Milestones
