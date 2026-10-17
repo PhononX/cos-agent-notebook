@@ -76,6 +76,12 @@ admin purges it, the same as personal mail sent to a work address. The member ca
 correct the item, but can't purge it, because a member who could purge their own items could also
 clear work records. This is why the agent asks when it isn't sure.
 
+The other way round is the person's to fix. Work content filed in the personal notebook by mistake
+is refiled: the agent adds it to the right work notebook first, then, with the person's approval,
+purges it from the personal notebook, history included, so the person doesn't keep company
+information outside the workspace. The person can purge anything from their own notebook at any
+time.
+
 ## Rules that win over these
 
 - **The person's own:** under "Where things go" in their personal `my-rules.md` ("anything about my

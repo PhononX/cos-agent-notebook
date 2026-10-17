@@ -127,6 +127,13 @@ history: someone in two workspaces has three notebooks, one per space, kept apar
   admin can purge it from history, as with personal mail sent to a work address. A member who
   could purge their own items could also clear work records, so they can't. This is why the
   agent asks when an item's side isn't clear.
+- **Mistakes in the personal notebook are the person's to fix.** The person can purge anything
+  from their own notebook, history included, at any time. Work content filed there by mistake is
+  refiled so the person doesn't keep company information outside the workspace: the agent adds
+  it to the right work notebook first, and only once that has succeeded purges it from the
+  personal notebook. These are two calls, one per notebook; the service never moves anything
+  between notebooks itself. Purging needs the `admin` scope, which on a personal notebook only the
+  person holds, so an agent purges only with the person's approval.
 - **Notebooks never move between spaces.** A work notebook is created in its workspace and
   stays there; a personal notebook can't be moved into a workspace, or a work notebook out to a
   person or into another workspace. Joining a new workspace starts a new, empty notebook there.
@@ -204,7 +211,7 @@ history: someone in two workspaces has three notebooks, one per space, kept apar
   2. `git commit-tree <cutoff>^{tree}` → new parentless root
   3. `git rebase --onto <new-root> <cutoff> main --committer-date-is-author-date`
   4. `git reflog expire --expire=now --all && git gc --prune=now`
-- **Purge:** remove a file, or replace text, across all history (for example, a password
+- **Purge:** remove a file or an item, or replace text, across all history (for example, a password
   captured by mistake), then the same cleanup as step 4.
 - **Delete notebook:** removes the repository, derived indexes and any cached copies.
 
