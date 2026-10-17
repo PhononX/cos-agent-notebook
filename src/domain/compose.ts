@@ -86,6 +86,14 @@ export function checkFieldValue(value: string, label: string): string {
   return v
 }
 
+/** A name as an agent may pass it, `[[Dana Whitfield]]` or with stray spaces, reduced to the name. */
+export function cleanName(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^\[\[(.*)\]\]$/, '$1')
+    .trim()
+}
+
 /** Builds a `src` value: the given source (with today's date added if it has none), or the actor's default. */
 export function buildSrc(given: string | undefined, fallback: string, today: string): string {
   const raw = (given ?? fallback).trim()

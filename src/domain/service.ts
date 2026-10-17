@@ -2,11 +2,23 @@
 // every change gets the same checks, provenance and history however it arrives.
 
 import { createHash } from 'node:crypto'
-import { renderFrontMatterEntry, frontMatterValue } from '../format/front-matter.ts'
+import {
+  frontMatterValue,
+  parseFrontMatter,
+  renderFrontMatterEntry,
+} from '../format/front-matter.ts'
 import { CHANGE_ID, newChangeId } from '../format/ids.ts'
-import { STARTER_FILES, logPath, newNoteLines, noteName, pathProblem } from '../format/layout.ts'
+import {
+  STARTER_FILES,
+  logPath,
+  newNoteLines,
+  noteName,
+  noteType,
+  pathProblem,
+} from '../format/layout.ts'
 import { parseNote, type Item } from '../format/note.ts'
-import { isTimeZone, parseSameAs, type SameAs } from '../format/values.ts'
+import { isTimeZone, parseSameAs, WORK_NOTEBOOK, type SameAs } from '../format/values.ts'
+import { TextLines } from '../format/lines.ts'
 import { actorAuthor, actorLabel, checkActor, hasScope, type Actor } from './actor.ts'
 import {
   Batch,
@@ -16,7 +28,7 @@ import {
   type StaleItem,
   type Warning,
 } from './batch.ts'
-import { renderChecked } from './compose.ts'
+import { cleanName, renderChecked } from './compose.ts'
 import { NotebookError } from './errors.ts'
 import { checkRef, formatRef } from './notebook-ref.ts'
 import { runOperation } from './operations.ts'
@@ -182,7 +194,7 @@ export class NotebookService {
         (note.frontMatter?.entries ?? []).map((e) => [e.key, e.value]),
       ),
       /** The same person's notes in work notebooks (person notes in a personal notebook). */
-      same_as: sameAs !== undefined ? (parseSameAs(sameAs) ?? []) : [],
+      same_as: sameAs !== undefined ? parseSameAs(sameAs).links : [],
       items: note.items.map(compactItem),
       problems: note.problems.map(({ line, message }) => ({ line, message })),
       text,
@@ -190,38 +202,46 @@ export class NotebookService {
   }
 
   /**
-   * The person notes in a personal notebook that link to a note in a work notebook: how an agent
-   * reading a work note finds the person's own note on the same person. Reads only the personal
-   * notebook.
+   * The person notes in a personal notebook that link to a note in one work notebook: how an
+   * agent reading a work note finds the person's own note on the same person. Reads only the
+   * personal notebook's people notes. The work notebook is named as `same_as` stores it
+   * (`workspace:northwind:alex`), and each result carries only the links to that notebook, so a
+   * lookup from one workspace never reveals the person's other spaces.
    */
   async findLinkedPeople(
     personal: NotebookRef,
-    target: { notebook: NotebookRef; name?: string },
-  ): Promise<{ path: string; name: string; same_as: SameAs[] }[]> {
+    target: { notebook: string; name?: string },
+  ): Promise<{ path: string; name: string; links: SameAs[] }[]> {
     checkRef(personal)
-    checkRef(target.notebook)
     if (personal.space.kind !== 'personal') {
       throw new NotebookError(
         'invalid_value',
         'Links between people are kept in a personal notebook; pass one.',
       )
     }
+    const notebook = typeof target.notebook === 'string' ? target.notebook.trim() : ''
+    if (!WORK_NOTEBOOK.test(notebook)) {
+      throw new NotebookError(
+        'invalid_value',
+        `"${notebook}" isn't a work notebook name; they look like workspace:northwind:alex.`,
+      )
+    }
+    const name = target.name !== undefined ? cleanName(target.name) : undefined
     await this.requireNotebook(personal)
-    const want = formatRef(target.notebook)
-    const copy = await WorkingCopy.load(this.store, personal)
-    const out: { path: string; name: string; same_as: SameAs[] }[] = []
-    for (const path of copy.paths()) {
-      const note = copy.note(path)!
-      if (note.type !== 'person') continue
-      const value = frontMatterValue(note.frontMatter, 'same_as')
-      const links = value !== undefined ? (parseSameAs(value) ?? []) : []
-      if (
-        links.some(
-          (l) => l.notebook === want && (target.name === undefined || l.name === target.name),
-        )
-      ) {
-        out.push({ path, name: noteName(path)!, same_as: links })
-      }
+    const people = (await this.store.list(personal)).filter((p) => noteType(p) === 'person')
+    const out: { path: string; name: string; links: SameAs[] }[] = []
+    for (const path of people) {
+      const text = await this.store.read(personal, path)
+      if (text === null) continue
+      const value = frontMatterValue(
+        parseFrontMatter(TextLines.parse(text).lines()).frontMatter,
+        'same_as',
+      )
+      if (value === undefined) continue
+      const links = parseSameAs(value).links.filter(
+        (l) => l.notebook === notebook && (name === undefined || l.name === name),
+      )
+      if (links.length) out.push({ path, name: noteName(path)!, links })
     }
     return out
   }

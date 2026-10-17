@@ -121,14 +121,17 @@ history: someone in two workspaces has three notebooks, one per space, kept apar
 - **The personal notebook knows everyone.** It has a person note for everyone the person deals
   with in any space. For someone known mainly outside work it's the full record. For a colleague
   it can be a short entry that points, with `same_as`, to their note in each work notebook:
-  `same_as: workspace:northwind:alex/Dana Whitfield | workspace:fernhill:alex/D. Whitfield`. A
-  short entry holds what identifies the person and anything personal; what was learned at work
-  stays in the work note. Links live only in the personal notebook: work notebooks never point
-  to a personal notebook or to another workspace, so no workspace learns about the person's
-  other spaces. The service checks each link's form, never follows it into another notebook, and
-  offers a lookup (`findLinkedPeople`) so an agent reading a work note can find the personal one.
-  Keeping the personal notebook complete is the agent's job, one call per notebook. Links are
-  for people only for now.
+  `same_as: workspace:northwind:alex/Dana Whitfield | workspace:fernhill:alex/D. Whitfield`.
+  Each note grows with what comes in through its own space: what's learned at work goes into the
+  work note, what's learned outside work into the personal note. A personal entry can grow into
+  a full record, or stay just a name and a pointer. Links live only in the personal notebook:
+  work notebooks never point to a personal notebook or to another workspace, so no workspace
+  learns about the person's other spaces. The service checks each link's form (it must point to
+  a work notebook), never follows it into another notebook, and offers a lookup
+  (`findLinkedPeople`) so an agent reading a work note can find the personal one. The lookup
+  returns only the links to the notebook asked about, so it never reveals the person's other
+  spaces. Keeping the personal notebook complete is the agent's job, one call per notebook.
+  Links are for people only for now.
 - **One notebook per call.** Every read and write names exactly one notebook. No operation reads
   one notebook to write another, moves or copies items between them, or checks names across
   them. A client with access to both (an agent working for a person at work) calls each

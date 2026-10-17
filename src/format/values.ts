@@ -93,8 +93,12 @@ export function frontMatterProblem(noteType: string, key: string, value: string)
     return 'meeting_prep should be offer, auto or off'
   }
   if (key === 'same_as' && noteType !== 'person') return 'same_as is only for person notes'
-  if (key === 'same_as' && !parseSameAs(value)) {
-    return 'same_as should be links like "workspace:northwind:alex/Dana Whitfield", separated by " | "'
+  if (key === 'same_as') {
+    const { links, invalid } = parseSameAs(value)
+    if (invalid.length) {
+      return `same_as has ${invalid.length > 1 ? "parts that aren't links" : "a part that isn't a link"} to a note in a work notebook ("${invalid[0]}"); links look like "workspace:northwind:alex/Dana Whitfield", separated by " | "`
+    }
+    if (links.length > SAME_AS_MAX_LINKS) return `same_as has more than ${SAME_AS_MAX_LINKS} links`
   }
   if (key === 'timezone' && !isTimeZone(value)) {
     return 'timezone should be an IANA time zone name, like Europe/Berlin'
@@ -102,30 +106,37 @@ export function frontMatterProblem(noteType: string, key: string, value: string)
   return null
 }
 
+/** One part of a notebook's name (an account, workspace or notebook id). */
+export const ID_PART = '[a-z0-9][a-z0-9_-]{0,62}'
+
+/** The name of a work notebook, like `workspace:northwind:alex`. */
+export const WORK_NOTEBOOK = new RegExp(`^workspace:${ID_PART}:${ID_PART}$`)
+
 /**
- * A `same_as` link on a person note: the same person's note in another notebook, written
- * `<notebook>/<note name>`, like `workspace:northwind:alex/Dana Whitfield`. Several are
- * separated by ` | ` (names can't contain `|`).
+ * A `same_as` link on a person note in a personal notebook: the same person's note in a work
+ * notebook, written `<notebook>/<note name>`, like `workspace:northwind:alex/Dana Whitfield`.
+ * Several are separated by ` | ` (names can't contain `|`).
  */
 export interface SameAs {
   notebook: string
   name: string
 }
 
-const NOTEBOOK_NAME = /^(?:personal|workspace):[a-z0-9][a-z0-9_-]{0,62}:[a-z0-9][a-z0-9_-]{0,62}$/
+export const SAME_AS_MAX_LINKS = 20
 
-export function parseSameAs(value: string): SameAs[] | null {
-  const out: SameAs[] = []
+/** Reads every link it can; parts that aren't links are returned as `invalid`, never dropped silently. */
+export function parseSameAs(value: string): { links: SameAs[]; invalid: string[] } {
+  const links: SameAs[] = []
+  const invalid: string[] = []
   for (const part of value.split('|')) {
     const link = part.trim()
     const slash = link.indexOf('/')
-    if (slash < 0) return null
-    const notebook = link.slice(0, slash)
-    const name = link.slice(slash + 1)
-    if (!NOTEBOOK_NAME.test(notebook) || nameProblem(name)) return null
-    out.push({ notebook, name })
+    const notebook = slash < 0 ? '' : link.slice(0, slash)
+    const name = slash < 0 ? '' : link.slice(slash + 1)
+    if (WORK_NOTEBOOK.test(notebook) && !nameProblem(name)) links.push({ notebook, name })
+    else invalid.push(link)
   }
-  return out
+  return { links, invalid }
 }
 
 export function renderSameAs(links: readonly SameAs[]): string {

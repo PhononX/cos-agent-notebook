@@ -2,6 +2,7 @@
 // (personal) or a workspace's (work notebooks, one per member, controlled by the workspace).
 // Spaces are stored apart, so each can have its own storage, keys, retention and deletion.
 
+import { ID_PART } from '../format/values.ts'
 import { NotebookError } from './errors.ts'
 
 export type Space = { kind: 'personal'; account: string } | { kind: 'workspace'; workspace: string }
@@ -12,7 +13,7 @@ export interface NotebookRef {
   id: string
 }
 
-const PART = /^[a-z0-9][a-z0-9_-]{0,62}$/
+const PART = new RegExp(`^${ID_PART}$`)
 
 export function personalNotebook(account: string, id = 'default'): NotebookRef {
   return { space: { kind: 'personal', account }, id }

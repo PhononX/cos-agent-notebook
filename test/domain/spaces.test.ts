@@ -148,15 +148,16 @@ describe('personal and workspace notebooks', () => {
 
 describe('the same person across spaces', () => {
   it('parse and render same_as links, and check them in person notes only', () => {
-    const links = parseSameAs(
+    const { links, invalid } = parseSameAs(
       'workspace:northwind:alex/Dana Whitfield | workspace:fernhill:alex/D. Whitfield',
     )
+    assert.deepEqual(invalid, [])
     assert.deepEqual(links, [
       { notebook: 'workspace:northwind:alex', name: 'Dana Whitfield' },
       { notebook: 'workspace:fernhill:alex', name: 'D. Whitfield' },
     ])
     assert.equal(
-      renderSameAs(links!),
+      renderSameAs(links),
       'workspace:northwind:alex/Dana Whitfield | workspace:fernhill:alex/D. Whitfield',
     )
     for (const bad of [
@@ -164,9 +165,15 @@ describe('the same person across spaces', () => {
       'workspace:northwind/Dana',
       'workspace:northwind:alex/a:b',
       'team:x:y/Dana',
+      'personal:bob:default/Sam',
     ]) {
-      assert.equal(parseSameAs(bad), null, bad)
+      assert.deepEqual(parseSameAs(bad), { links: [], invalid: [bad] }, bad)
     }
+    // A broken part never hides the good ones.
+    assert.deepEqual(parseSameAs('workspace:northwind:alex/Dana | workspace:fernhill:alex/D:'), {
+      links: [{ notebook: 'workspace:northwind:alex', name: 'Dana' }],
+      invalid: ['workspace:fernhill:alex/D:'],
+    })
     const stray = parseNote(
       'projects/Q4 Launch.md',
       '---\nsame_as: workspace:northwind:alex/Q4\n---\n# Q4\n',
@@ -233,16 +240,23 @@ describe('the same person across spaces', () => {
       { notebook: 'workspace:fernhill:alex', name: 'D. Whitfield' },
     ])
     // From the work side, the agent finds the person's own note by reading the personal notebook.
+    // Each result carries only the links to the notebook asked about, never the other spaces.
     const found = await service.findLinkedPeople(personal, {
-      notebook: work,
-      name: 'Dana Whitfield',
+      notebook: 'workspace:northwind:alex',
+      name: '[[Dana Whitfield]] ',
     })
+    assert.deepEqual(found, [
+      {
+        path: 'people/Dana Whitfield.md',
+        name: 'Dana Whitfield',
+        links: [{ notebook: 'workspace:northwind:alex', name: 'Dana Whitfield' }],
+      },
+    ])
     assert.deepEqual(
-      found.map((f) => f.path),
-      ['people/Dana Whitfield.md'],
-    )
-    assert.deepEqual(
-      await service.findLinkedPeople(personal, { notebook: work, name: 'Sam Okafor' }),
+      await service.findLinkedPeople(personal, {
+        notebook: 'workspace:northwind:alex',
+        name: 'Sam Okafor',
+      }),
       [],
     )
   })
@@ -282,7 +296,7 @@ describe('the same person across spaces', () => {
         AGENT,
       ),
     )
-    assert.match(e.message, /isn't a workspace notebook/)
+    assert.match(e.message, /isn't a work notebook/)
     e = await refusal(
       service.applyChanges(
         personal,
@@ -300,6 +314,174 @@ describe('the same person across spaces', () => {
       ),
     )
     assert.match(e.message, /person notes/)
-    await assert.rejects(service.findLinkedPeople(work, { notebook: work }), /personal notebook/)
+    await assert.rejects(
+      service.findLinkedPeople(work, { notebook: 'workspace:northwind:alex' }),
+      /personal notebook/,
+    )
+    const bad = await refusal(service.findLinkedPeople(personal, { notebook: 'northwind' }))
+    assert.equal(bad.code, 'invalid_value')
+  })
+
+  it('keep links a hand-edited line holds, refusing to overwrite a line they cannot read', async () => {
+    const { store, service } = await twoNotebooks()
+    await store.write(personal, [
+      {
+        path: 'people/Dana Whitfield.md',
+        content:
+          '---\nsame_as: workspace:northwind:alex/Dana Whitfield, workspace:fernhill:alex/D. Whitfield\n---\n# Dana Whitfield\n',
+      },
+    ])
+    const e = await refusal(
+      service.applyChanges(
+        personal,
+        {
+          operations: [
+            {
+              op: 'note',
+              type: 'person',
+              name: 'Dana Whitfield',
+              same_as: [{ notebook: 'workspace:acme:alex', name: 'Dana' }],
+            },
+          ],
+        },
+        AGENT,
+      ),
+    )
+    assert.equal(e.code, 'invalid_value')
+    assert.match(e.message, /aren't links/)
+    assert.match((await store.read(personal, 'people/Dana Whitfield.md'))!, /, workspace:fernhill/)
+    // readNote still offers the links it can read, and reports the problem.
+    await store.write(personal, [
+      {
+        path: 'people/Dana Whitfield.md',
+        content:
+          '---\nsame_as: workspace:northwind:alex/Dana Whitfield | workspace:fernhill:alex/D:\n---\n# Dana Whitfield\n',
+      },
+    ])
+    const note = await service.readNote(personal, 'people/Dana Whitfield.md')
+    assert.deepEqual(note.same_as, [
+      { notebook: 'workspace:northwind:alex', name: 'Dana Whitfield' },
+    ])
+    assert.match(note.problems[0]!.message, /isn't a link/)
+    assert.equal(
+      (await service.findLinkedPeople(personal, { notebook: 'workspace:northwind:alex' })).length,
+      1,
+    )
+  })
+
+  it('check links the same way whether they come as same_as or front_matter', async () => {
+    const { service } = await twoNotebooks()
+    for (const value of ['personal:bob:default/Sam', 'personal:alex:default/Sam']) {
+      const e = await refusal(
+        service.applyChanges(
+          personal,
+          {
+            operations: [
+              { op: 'note', type: 'person', name: 'Sam Okafor', front_matter: { same_as: value } },
+            ],
+          },
+          AGENT,
+        ),
+      )
+      assert.equal(e.code, 'invalid_value', value)
+    }
+    const secret = await refusal(
+      service.applyChanges(
+        personal,
+        {
+          operations: [
+            {
+              op: 'note',
+              type: 'person',
+              name: 'Sam Okafor',
+              same_as: [{ notebook: 'workspace:northwind:alex', name: `ghp_${'a'.repeat(36)}` }],
+            },
+          ],
+        },
+        AGENT,
+      ),
+    )
+    assert.equal(secret.code, 'secret')
+    const badRef = await refusal(
+      service.applyChanges(
+        personal,
+        {
+          operations: [
+            {
+              op: 'note',
+              type: 'person',
+              name: 'Sam Okafor',
+              same_as: [{ notebook: 'workspace:Northwind:alex', name: 'Sam' }],
+            },
+          ],
+        },
+        AGENT,
+      ),
+    )
+    assert.equal(badRef.code, 'invalid_value')
+    assert.match(badRef.message, /same_as link 1/)
+  })
+
+  it('let a stray link in a work notebook be removed', async () => {
+    const { store, service } = await twoNotebooks()
+    await store.write(work, [
+      { path: 'people/Lee.md', content: '---\nsame_as: workspace:fernhill:alex/Lee\n---\n# Lee\n' },
+    ])
+    await service.applyChanges(
+      work,
+      { operations: [{ op: 'note', file: 'people/Lee.md', front_matter: { same_as: null } }] },
+      AGENT,
+    )
+    assert.equal(await store.read(work, 'people/Lee.md'), '# Lee\n')
+  })
+
+  it('report a new stub in file order, and change nothing when every link is already there', async () => {
+    const { history, service } = await twoNotebooks()
+    const op = {
+      op: 'note',
+      type: 'person',
+      name: 'Dana Whitfield',
+      same_as: [{ notebook: 'workspace:northwind:alex', name: 'Dana Whitfield' }],
+    }
+    const first = await service.applyChanges(personal, { operations: [op] }, AGENT)
+    assert.deepEqual(first.results[0]!.changes, [
+      {
+        file: 'people/Dana Whitfield.md',
+        before: [],
+        after: [
+          '---',
+          'same_as: workspace:northwind:alex/Dana Whitfield',
+          '---',
+          '# Dana Whitfield',
+        ],
+      },
+    ])
+    const commits = history.commitsOf(personal).length
+    const again = await service.applyChanges(personal, { operations: [op] }, AGENT)
+    assert.equal(again.results[0]!.status, 'unchanged')
+    assert.equal(again.change_id, null)
+    assert.equal(history.commitsOf(personal).length, commits)
+  })
+
+  it('allow at most 20 links on one person', async () => {
+    const { service } = await twoNotebooks()
+    const links = Array.from({ length: 21 }, (_, i) => ({
+      notebook: `workspace:w${i}:alex`,
+      name: 'Dana',
+    }))
+    const e = await refusal(
+      service.applyChanges(
+        personal,
+        {
+          operations: [
+            { op: 'note', type: 'person', name: 'Dana Whitfield', same_as: links.slice(0, 10) },
+            { op: 'note', type: 'person', name: 'Dana Whitfield', same_as: links.slice(10, 20) },
+            { op: 'note', type: 'person', name: 'Dana Whitfield', same_as: links.slice(20) },
+          ],
+        },
+        AGENT,
+      ),
+    )
+    assert.match(e.message, /at most 20/)
   })
 })

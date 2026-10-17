@@ -17,7 +17,7 @@ import {
   type NamedNoteType,
 } from '../format/layout.ts'
 import type { Item } from '../format/note.ts'
-import { renderFrontMatterEntry } from '../format/front-matter.ts'
+import { frontMatterValue, renderFrontMatterEntry } from '../format/front-matter.ts'
 import {
   DATE,
   KEY,
@@ -26,14 +26,14 @@ import {
   nameProblem,
   parseSameAs,
   renderSameAs,
-  type SameAs,
+  SAME_AS_MAX_LINKS,
+  WORK_NOTEBOOK,
 } from '../format/values.ts'
-import { frontMatterValue } from '../format/front-matter.ts'
-import { formatRef, parseRef } from './notebook-ref.ts'
 import { type Batch } from './batch.ts'
 import {
   buildSrc,
   checkDate,
+  cleanName,
   checkFieldValue,
   checkQuote,
   checkSentence,
@@ -613,9 +613,10 @@ function frontMatterValues(
         `"${k}" isn't a front matter key: use lowercase letters, digits and _.`,
       )
     }
-    if (k === 'same_as') checkSameAsAllowed(b)
+    // Removing a same_as is always allowed, so a stray one in a work notebook can be cleaned up.
     if (v === null) return [k, null]
-    const value = checkText(String(v), k, 300)
+    if (k === 'same_as') checkSameAsAllowed(b)
+    const value = checkText(String(v), k, k === 'same_as' ? SAME_AS_MAX_CHARS : 300)
     const problem = frontMatterProblem(type, k, value)
     if (problem) throw new NotebookError('invalid_value', `${problem}.`)
     return [k, value]
@@ -632,34 +633,59 @@ function checkSameAsAllowed(b: Batch): void {
   }
 }
 
-/** Adds same_as links to a person note in the personal notebook, keeping the ones it has. */
-function addSameAs(
+const SAME_AS_MAX_CHARS = 4000
+
+/**
+ * The person note's same_as value with `links` added to the ones it has, or null when every
+ * link is already there. Each link must name a work notebook and a valid note name. A same_as
+ * line with parts that aren't links is refused rather than overwritten, so nothing is lost.
+ */
+function mergedSameAs(
   b: Batch,
-  path: string,
+  current: string | undefined,
   links: readonly { notebook: string; name: string }[],
-): boolean {
+): string | null {
   checkSameAsAllowed(b)
-  const existing = frontMatterValue(b.copy.note(path)?.frontMatter ?? null, 'same_as')
-  const all: SameAs[] = existing ? (parseSameAs(existing) ?? []) : []
-  for (const link of links) {
-    const target = parseRef(link.notebook)
-    if (target.space.kind !== 'workspace') {
+  const parsed = current !== undefined ? parseSameAs(current) : { links: [], invalid: [] }
+  if (parsed.invalid.length) {
+    throw new NotebookError(
+      'invalid_value',
+      `This note's same_as line has parts that aren't links ("${parsed.invalid[0]}"), so adding to it could lose them. Read the note, then set front_matter.same_as to the full, corrected list.`,
+    )
+  }
+  const all = [...parsed.links]
+  let added = false
+  links.forEach((link, i) => {
+    const notebook = link.notebook.trim()
+    if (!WORK_NOTEBOOK.test(notebook)) {
       throw new NotebookError(
         'invalid_value',
-        `same_as links point from the personal notebook to work notebooks; "${link.notebook}" isn't a workspace notebook.`,
+        notebook.startsWith('personal:')
+          ? `same_as link ${i + 1} points to "${notebook}", which isn't a work notebook. Links go from the personal notebook to work notebooks only.`
+          : `same_as link ${i + 1}: "${notebook}" isn't a work notebook name; they look like workspace:northwind:alex.`,
       )
     }
-    const name = link.name
-      .trim()
-      .replace(/^\[\[(.*)\]\]$/, '$1')
-      .trim()
+    const name = cleanName(link.name)
     const problem = nameProblem(name)
-    if (problem)
-      throw new NotebookError('invalid_value', `The linked name "${link.name}" ${problem}.`)
-    const notebook = formatRef(target)
-    if (!all.some((l) => l.notebook === notebook && l.name === name)) all.push({ notebook, name })
+    if (problem) {
+      throw new NotebookError(
+        'invalid_value',
+        `same_as link ${i + 1}: the name "${link.name}" ${problem}.`,
+      )
+    }
+    if (!all.some((l) => l.notebook === notebook && l.name === name)) {
+      all.push({ notebook, name })
+      added = true
+    }
+  })
+  if (!added) return null
+  if (all.length > SAME_AS_MAX_LINKS) {
+    throw new NotebookError(
+      'invalid_value',
+      `A person note can have at most ${SAME_AS_MAX_LINKS} same_as links.`,
+    )
   }
-  return b.setFrontMatter(path, 'same_as', renderSameAs(all))
+  return checkText(renderSameAs(all), 'same_as', SAME_AS_MAX_CHARS)
 }
 
 function createNamedNote(
@@ -705,7 +731,18 @@ async function note(b: Batch, op: OperationOf<'note'>): Promise<void> {
     b.checkWritable(path)
   }
 
-  const front = frontMatterValues(b, type, op.front_matter ?? {})
+  let front = frontMatterValues(b, type, op.front_matter ?? {})
+  if (op.same_as) {
+    if (type !== 'person') {
+      throw new NotebookError('invalid_value', 'same_as links are for person notes.')
+    }
+    const given = front.find(([k]) => k === 'same_as')
+    const current = given
+      ? (given[1] ?? undefined)
+      : frontMatterValue(b.copy.note(path)?.frontMatter ?? null, 'same_as')
+    const merged = mergedSameAs(b, current, op.same_as)
+    if (merged !== null) front = [...front.filter(([k]) => k !== 'same_as'), ['same_as', merged]]
+  }
   let status = 'unchanged'
   if (!b.copy.has(path) && name !== null) {
     const withDefaults =
@@ -716,12 +753,6 @@ async function note(b: Batch, op: OperationOf<'note'>): Promise<void> {
     status = 'created'
   } else {
     for (const [k, v] of front) if (b.setFrontMatter(path, k, v)) status = 'updated'
-  }
-  if (op.same_as) {
-    if (type !== 'person') {
-      throw new NotebookError('invalid_value', 'same_as links are for person notes.')
-    }
-    if (addSameAs(b, path, op.same_as) && status === 'unchanged') status = 'updated'
   }
   if (op.append?.length) {
     const lines: string[] = []

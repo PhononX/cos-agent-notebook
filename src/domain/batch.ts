@@ -13,6 +13,7 @@ import {
 } from '../format/layout.ts'
 import type { Item, Note } from '../format/note.ts'
 import { actorLabel, hasScope, type Actor } from './actor.ts'
+import { cleanName } from './compose.ts'
 import { NotebookError } from './errors.ts'
 import { checkName, type KnownName, type NameType } from './names.ts'
 import { nameProblem } from '../format/values.ts'
@@ -341,10 +342,7 @@ export class Batch {
    * a close but different one is refused with the closest matches; a new one is accepted.
    */
   resolveName(raw: string, type: Exclude<NameType, 'link'>, label = type): string {
-    const name = raw
-      .trim()
-      .replace(/^\[\[(.*)\]\]$/, '$1')
-      .trim()
+    const name = cleanName(raw)
     const problem = nameProblem(name)
     if (problem) throw new NotebookError('invalid_value', `The ${label} name "${raw}" ${problem}.`)
     const check = checkName(name, this.knownNames())
