@@ -92,6 +92,13 @@ export function frontMatterProblem(noteType: string, key: string, value: string)
   if (key === 'meeting_prep' && !['offer', 'auto', 'off'].includes(value)) {
     return 'meeting_prep should be offer, auto or off'
   }
+  if (key === 'workspace_ids') {
+    if (noteType !== 'my-rules') return 'workspace_ids is only for my-rules.md'
+    const { invalid } = parseWorkspaceIds(value)
+    if (invalid.length) {
+      return `workspace_ids has a part that isn't "<source>:<id>" ("${invalid[0]}"), like "slack:T024BE7LD", separated by " | "`
+    }
+  }
   if (key === 'same_as' && noteType !== 'person') return 'same_as is only for person notes'
   if (key === 'same_as') {
     const { links, invalid } = parseSameAs(value)
@@ -104,6 +111,37 @@ export function frontMatterProblem(noteType: string, key: string, value: string)
     return 'timezone should be an IANA time zone name, like Europe/Berlin'
   }
   return null
+}
+
+/**
+ * An id a client uses for a workspace, like `slack:T024BE7LD` or `google:northwind.example`:
+ * a short lowercase source, a colon, and the client's id (no spaces or `|`). A work notebook's
+ * my-rules.md lists them in `workspace_ids`, so a client can name the workspace its own way.
+ */
+export interface WorkspaceId {
+  source: string
+  id: string
+}
+
+export const WORKSPACE_ID_SOURCE = /^[a-z][a-z0-9_-]{0,31}$/
+export const WORKSPACE_ID_VALUE = /^[^\s|[\]"]{1,200}$/
+
+export function parseWorkspaceIds(value: string): { ids: WorkspaceId[]; invalid: string[] } {
+  const ids: WorkspaceId[] = []
+  const invalid: string[] = []
+  for (const part of value.split('|')) {
+    const s = part.trim()
+    const colon = s.indexOf(':')
+    const source = colon < 0 ? '' : s.slice(0, colon)
+    const id = colon < 0 ? '' : s.slice(colon + 1)
+    if (WORKSPACE_ID_SOURCE.test(source) && WORKSPACE_ID_VALUE.test(id)) ids.push({ source, id })
+    else invalid.push(s)
+  }
+  return { ids, invalid }
+}
+
+export function renderWorkspaceIds(ids: readonly WorkspaceId[]): string {
+  return ids.map((i) => `${i.source}:${i.id}`).join(' | ')
 }
 
 /** One part of a notebook's name (an account, workspace or notebook id). */

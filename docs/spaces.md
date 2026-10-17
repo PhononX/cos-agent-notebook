@@ -73,7 +73,9 @@ personal text) is a hint, never the decision. Don't guess, and don't file it in 
 | Everything else (actions, waiting, ideas, decisions, projects, drafts, today's files, log, archive) | Your own | That workspace's |
 
 The profile an agent works with combines them: the defaults, then your personal notebook, then the
-rules of the work notebook it's working in.
+rules of each of your work notebooks, labelled by notebook. In a workspace, its own rules win. A
+client says which workspace a conversation is in with its own id for it (a Slack team id, say),
+which the work notebook records in `workspace_ids`.
 
 ## People in both
 

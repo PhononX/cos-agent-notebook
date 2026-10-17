@@ -419,7 +419,9 @@ In a **work notebook**, `my-rules.md` holds only what is specific to that worksp
 go", "Important people" and "My tools" (and other rules about working there), with `timezone` as
 its only setting. The other settings and "My briefs" are the person's own preferences and live in
 their personal notebook. An agent combines them: the defaults, then the personal `my-rules.md`,
-then the work notebook's, whose rules win in that workspace.
+then the work notebook's, whose rules win in that workspace. A work notebook's front matter can
+also list `workspace_ids`: the ids clients use for that workspace, `<source>:<id>`, separated by
+` | `, like `workspace_ids: slack:T024BE7LD | google:northwind.example`.
 ```
 ---
 timezone: Europe/Berlin

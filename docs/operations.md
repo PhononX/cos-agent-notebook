@@ -242,6 +242,16 @@ Adds a line to today's daily log, with the time and who wrote it.
 { "op": "log", "text": "Talked through pricing with Dana", "person": "Dana Whitfield" }
 ```
 
+### identify
+
+In a work notebook: records an id a client uses for this workspace, so later calls can name the
+workspace the client's way. It adds to `workspace_ids` in the notebook's `my-rules.md`, needs no
+`rules:write` scope, and does nothing if the id is already there.
+
+```json
+{ "op": "identify", "source": "slack", "id": "T024BE7LD" }
+```
+
 ## undo
 
 `undo(notebook, change_id)` reverts one change as a new change, so history keeps both. Daily log

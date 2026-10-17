@@ -165,7 +165,10 @@ export class Batch {
   // ---------- writing ----------
 
   /** Refuses writes the actor may not make, and notes the service keeps to itself. */
-  checkWritable(path: string, opts: { allowLog?: boolean; allowArchive?: boolean } = {}): void {
+  checkWritable(
+    path: string,
+    opts: { allowLog?: boolean; allowArchive?: boolean; withoutRulesScope?: boolean } = {},
+  ): void {
     const problem = pathProblem(path)
     if (problem) throw new NotebookError('invalid_value', `The path "${path}" ${problem}.`)
     if (this.notebook.space.kind === 'workspace' && PERSONAL_ONLY_FILES.includes(path)) {
@@ -174,7 +177,7 @@ export class Batch {
         `${path} describes the person and travels with them, so it lives only in their personal notebook. Write it there.`,
       )
     }
-    if (path === 'my-rules.md' && !hasScope(this.actor, 'rules:write')) {
+    if (path === 'my-rules.md' && !opts.withoutRulesScope && !hasScope(this.actor, 'rules:write')) {
       throw new NotebookError(
         'forbidden',
         'Changing my-rules.md needs the rules:write scope. Ask the person to make this change, or to grant that scope.',

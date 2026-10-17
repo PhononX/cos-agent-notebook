@@ -17,8 +17,15 @@ import {
   noteType,
   pathProblem,
 } from '../format/layout.ts'
-import { parseNote, type Item } from '../format/note.ts'
-import { isTimeZone, parseSameAs, WORK_NOTEBOOK, type SameAs } from '../format/values.ts'
+import { parseNote, type Item, type Note } from '../format/note.ts'
+import {
+  isTimeZone,
+  parseSameAs,
+  parseWorkspaceIds,
+  WORK_NOTEBOOK,
+  type SameAs,
+  type WorkspaceId,
+} from '../format/values.ts'
 import { TextLines } from '../format/lines.ts'
 import { actorAuthor, actorLabel, checkActor, hasScope, type Actor } from './actor.ts'
 import {
@@ -32,7 +39,7 @@ import {
 import { cleanName, renderChecked } from './compose.ts'
 import { NotebookError } from './errors.ts'
 import { setFrontMatterLines } from './front-matter-edit.ts'
-import { checkRef, formatRef } from './notebook-ref.ts'
+import { checkRef, formatRef, sameNotebook } from './notebook-ref.ts'
 import { runOperation } from './operations.ts'
 import {
   silentLogger,
@@ -91,18 +98,31 @@ export interface ProfileLine extends CompactItem {
   section: string
 }
 
+export interface ProfileWorkspace {
+  /** The work notebook, like `workspace:northwind:alex`. */
+  notebook: string
+  timezone: string
+  /** Ids clients use for this workspace (from `workspace_ids` in its my-rules.md). */
+  workspace_ids: WorkspaceId[]
+}
+
 export interface Profile {
-  /** The time zone of the notebook being worked in. */
+  /** The work notebook this conversation is in, when the client said; otherwise null. */
+  current: string | null
+  /** The time zone of the notebook being worked in: the current workspace's, else personal. */
   timezone: string
   /** The person's own preferences: defaults, changed by their personal my-rules.md. */
   settings: { nudges_per_day: number; stale_days: number; meeting_prep: string }
   /** about-me.md from the personal notebook. */
   about_me: ProfileLine[]
   /**
-   * Rules, the personal notebook's first, then the work notebook's. In that workspace its own
-   * rules win where they differ.
+   * Rules: the personal notebook's first, then each work notebook's, each labelled with its
+   * notebook. In a workspace, that workspace's rules win where they differ.
    */
   rules: ProfileLine[]
+  /** Every work notebook in the profile. */
+  workspaces: ProfileWorkspace[]
+  warnings: Warning[]
 }
 
 export interface AdoptResult {
@@ -359,10 +379,15 @@ export class NotebookService {
 
   /**
    * The profile an agent loads to work for the person: the defaults, then the personal
-   * notebook's about-me.md and my-rules.md, then (when working in a workspace) that work
-   * notebook's my-rules.md. A read across the person's notebooks; nothing combined is stored.
+   * notebook's about-me.md and my-rules.md, then the my-rules.md of each of the person's work
+   * notebooks. `current` says which workspace the conversation is in, as a notebook or as an id
+   * the client uses for it (`{ source: 'slack', id: 'T024BE7LD' }`); it decides the time zone.
+   * A read across the person's notebooks; nothing combined is stored.
    */
-  async profile(personal: NotebookRef, work?: NotebookRef): Promise<Profile> {
+  async profile(
+    personal: NotebookRef,
+    opts: { work?: readonly NotebookRef[]; current?: NotebookRef | WorkspaceId } = {},
+  ): Promise<Profile> {
     checkRef(personal)
     if (personal.space.kind !== 'personal') {
       throw new NotebookError(
@@ -370,24 +395,30 @@ export class NotebookService {
         'A profile starts from a personal notebook; pass one first.',
       )
     }
-    if (work !== undefined) {
-      checkRef(work)
-      if (work.space.kind !== 'workspace') {
-        throw new NotebookError(
-          'invalid_value',
-          'The second notebook of a profile is a work notebook.',
-        )
+    const work = [...(opts.work ?? [])]
+    const current = opts.current
+    if (
+      current !== undefined &&
+      'space' in current &&
+      !work.some((w) => sameNotebook(w, current))
+    ) {
+      work.push(current)
+    }
+    for (const w of work) {
+      checkRef(w)
+      if (w.space.kind !== 'workspace') {
+        throw new NotebookError('invalid_value', `${formatRef(w)} isn't a work notebook.`)
       }
     }
+    await this.requireNotebook(personal)
     const read = async (nb: NotebookRef, path: string) => {
+      await this.requireNotebook(nb)
       const text = await this.store.read(nb, path)
       return text === null ? null : parseNote(path, text)
     }
-    await this.requireNotebook(personal)
-    if (work) await this.requireNotebook(work)
     const aboutMe = await read(personal, 'about-me.md')
     const personalRules = await read(personal, 'my-rules.md')
-    const workRules = work ? await read(work, 'my-rules.md') : null
+    const workRules = await Promise.all(work.map((w) => read(w, 'my-rules.md')))
 
     const fm = personalRules?.frontMatter ?? null
     const count = (key: string, fallback: number) => {
@@ -395,14 +426,50 @@ export class NotebookService {
       return v !== undefined && /^\d+$/.test(v) ? Number(v) : fallback
     }
     const prep = frontMatterValue(fm, 'meeting_prep')
-    const zone = (note: typeof personalRules) => {
+    const zone = (note: Note | null) => {
       const tz = frontMatterValue(note?.frontMatter ?? null, 'timezone')
       return tz !== undefined && isTimeZone(tz) ? tz : undefined
     }
-    const lines = (note: typeof personalRules, nb: NotebookRef): ProfileLine[] =>
+    const lines = (note: Note | null, nb: NotebookRef): ProfileLine[] =>
       (note?.items ?? []).map((i) => ({ ...compactItem(i, nb), section: i.section.at(-1) ?? '' }))
+    const personalZone = zone(personalRules) ?? this.defaultTimezone
+    const workspaces: ProfileWorkspace[] = work.map((w, i) => {
+      const ids = frontMatterValue(workRules[i]?.frontMatter ?? null, 'workspace_ids')
+      return {
+        notebook: formatRef(w),
+        timezone: zone(workRules[i] ?? null) ?? personalZone,
+        workspace_ids: ids !== undefined ? parseWorkspaceIds(ids).ids : [],
+      }
+    })
+
+    const warnings: Warning[] = []
+    let chosen: ProfileWorkspace | null = null
+    if (current !== undefined && 'space' in current) {
+      chosen = workspaces.find((w) => w.notebook === formatRef(current)) ?? null
+    } else if (current !== undefined) {
+      const matches = workspaces.filter((w) =>
+        w.workspace_ids.some((x) => x.source === current.source && x.id === current.id),
+      )
+      if (matches.length > 1) {
+        throw new NotebookError(
+          'ambiguous',
+          `The ${current.source} id ${current.id} is recorded for more than one work notebook: ${matches.map((m) => m.notebook).join(', ')}. Remove it from all but one.`,
+          { candidates: matches.map((m) => m.notebook) },
+        )
+      }
+      chosen = matches[0] ?? null
+      if (!chosen) {
+        warnings.push({
+          code: 'unknown_workspace',
+          message: `No work notebook has the ${current.source} id ${current.id}. Ask the person which workspace this is, then record it there with the identify operation.`,
+          source: current.source,
+          id: current.id,
+        })
+      }
+    }
     return {
-      timezone: (work ? zone(workRules) : undefined) ?? zone(personalRules) ?? this.defaultTimezone,
+      current: chosen?.notebook ?? null,
+      timezone: chosen?.timezone ?? personalZone,
       settings: {
         nudges_per_day: count('nudges_per_day', DEFAULT_SETTINGS.nudges_per_day),
         stale_days: count('stale_days', DEFAULT_SETTINGS.stale_days),
@@ -412,7 +479,12 @@ export class NotebookService {
             : DEFAULT_SETTINGS.meeting_prep,
       },
       about_me: lines(aboutMe, personal),
-      rules: [...lines(personalRules, personal), ...(work ? lines(workRules, work) : [])],
+      rules: [
+        ...lines(personalRules, personal),
+        ...work.flatMap((w, i) => lines(workRules[i] ?? null, w)),
+      ],
+      workspaces,
+      warnings,
     }
   }
 

@@ -135,7 +135,14 @@ const RuleOp = z.strictObject({
 
 const LogOp = z.strictObject({ op: z.literal('log'), text, ...links, src: z.string().optional() })
 
+const IdentifyOp = z.strictObject({
+  op: z.literal('identify'),
+  source: z.string().describe("The client's kind of id, like slack, google or cv"),
+  id: z.string().describe("The client's id for this workspace, like T024BE7LD"),
+})
+
 export const Operation = z.discriminatedUnion('op', [
+  IdentifyOp,
   AddOp,
   CompleteOp,
   UpdateOp,
@@ -185,7 +192,7 @@ function issueMessage(issue: z.core.$ZodIssue): string {
     return `unknown field ${issue.keys.map((k) => `"${k}"`).join(', ')}; check the field names in the tool description`
   }
   if (issue.code === 'invalid_union' && issue.path.at(-1) === 'op') {
-    return 'unknown operation; use one of add, complete, update, archive, move, decide, note, merge, promote, set_focus, rule, log'
+    return 'unknown operation; use one of add, complete, update, archive, move, decide, note, merge, promote, set_focus, rule, log, identify'
   }
   return issue.message
 }

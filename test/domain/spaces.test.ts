@@ -605,8 +605,9 @@ describe('what lives only in the personal notebook', () => {
       atHome.about_me.map((l) => [l.section, l.text]),
       [['How I write', 'Short and direct']],
     )
-    const atWork = await service.profile(personal, work)
+    const atWork = await service.profile(personal, { work: [work], current: work })
     assert.equal(atWork.timezone, 'Europe/Berlin')
+    assert.equal(atWork.current, 'workspace:northwind:alex')
     assert.deepEqual(
       atWork.rules.map((r) => [r.notebook, r.section, r.text]),
       [
@@ -615,6 +616,92 @@ describe('what lives only in the personal notebook', () => {
       ],
     )
     await assert.rejects(service.profile(work), /personal notebook/)
-    await assert.rejects(service.profile(personal, personal), /work notebook/)
+    await assert.rejects(service.profile(personal, { work: [personal] }), /isn't a work notebook/)
+  })
+
+  it('covers every workspace, and finds the current one by an id the client uses for it', async () => {
+    const { store, service } = await twoNotebooks()
+    const fernhill = workspaceNotebook('fernhill', 'alex')
+    await service.init(fernhill, { actor: AGENT, timezone: 'Asia/Tokyo' })
+    const scoped = { ...AGENT, scopes: ['notebook:read', 'notebook:write'] }
+    const r = await service.applyChanges(
+      work,
+      { operations: [{ op: 'identify', source: 'slack', id: 'T024BE7LD' }] },
+      scoped,
+    )
+    assert.equal(r.results[0]!.status, 'updated')
+    await service.applyChanges(
+      fernhill,
+      {
+        operations: [
+          { op: 'identify', source: 'slack', id: 'T09FERN01' },
+          { op: 'identify', source: 'google', id: 'fernhill.example' },
+          { op: 'identify', source: 'slack', id: 'T09FERN01' },
+        ],
+      },
+      scoped,
+    )
+    assert.match(
+      (await store.read(fernhill, 'my-rules.md'))!,
+      /^---\ntimezone: Asia\/Tokyo\nworkspace_ids: slack:T09FERN01 \| google:fernhill\.example\n---\n/,
+    )
+
+    const profile = await service.profile(personal, {
+      work: [work, fernhill],
+      current: { source: 'google', id: 'fernhill.example' },
+    })
+    assert.equal(profile.current, 'workspace:fernhill:alex')
+    assert.equal(profile.timezone, 'Asia/Tokyo')
+    assert.deepEqual(
+      profile.workspaces.map((w) => [
+        w.notebook,
+        w.workspace_ids.map((x) => `${x.source}:${x.id}`),
+      ]),
+      [
+        ['workspace:northwind:alex', ['slack:T024BE7LD']],
+        ['workspace:fernhill:alex', ['slack:T09FERN01', 'google:fernhill.example']],
+      ],
+    )
+
+    // An id no notebook has: no current workspace, and a warning saying what to do.
+    const unknown = await service.profile(personal, {
+      work: [work, fernhill],
+      current: { source: 'slack', id: 'T0NOTHERE' },
+    })
+    assert.equal(unknown.current, null)
+    assert.equal(unknown.timezone, 'UTC')
+    assert.equal(unknown.warnings[0]!.code, 'unknown_workspace')
+
+    // The same id on two notebooks is refused, naming both.
+    await service.applyChanges(
+      work,
+      { operations: [{ op: 'identify', source: 'slack', id: 'T09FERN01' }] },
+      AGENT,
+    )
+    const e = await refusal(
+      service.profile(personal, {
+        work: [work, fernhill],
+        current: { source: 'slack', id: 'T09FERN01' },
+      }),
+    )
+    assert.equal(e.code, 'ambiguous')
+  })
+
+  it('records workspace ids only in work notebooks, checking their form', async () => {
+    const { service } = await twoNotebooks()
+    const tryOp = (nb: typeof work, op: Record<string, unknown>) =>
+      refusal(service.applyChanges(nb, { operations: [op] }, AGENT))
+    assert.match(
+      (await tryOp(personal, { op: 'identify', source: 'slack', id: 'T1' })).message,
+      /work notebook/,
+    )
+    assert.match(
+      (await tryOp(work, { op: 'identify', source: 'Slack', id: 'T1' })).message,
+      /lowercase/,
+    )
+    assert.match(
+      (await tryOp(work, { op: 'identify', source: 'slack', id: 'a b' })).message,
+      /without spaces/,
+    )
   })
 })

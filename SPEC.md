@@ -204,9 +204,17 @@ history: someone in two workspaces has three notebooks, one per space, kept apar
   profile that agents load at the start of a session. `about-me.md` and the person's preferences
   (`nudges_per_day`, `stale_days`, `meeting_prep`, "My briefs") live only in the personal
   notebook; a work notebook's `my-rules.md` holds only that workspace's rules (where things go,
-  important people, tools) and its `timezone`, and the service refuses the rest there. Working in
-  a workspace, the profile is the defaults, then the personal notebook, then that work
-  notebook's rules, which win in that workspace.
+  important people, tools) and its `timezone`, and the service refuses the rest there. The
+  profile covers all of the person's notebooks: the defaults, then the personal notebook, then
+  each work notebook's rules, labelled by notebook; in a workspace, its own rules win.
+- **Knowing which workspace a conversation is in.** A client names the workspace its own way:
+  a Slack team id, a Google Workspace domain, a Carbon Voice workspace. A work notebook records
+  the ids clients use for it (`workspace_ids` in its `my-rules.md`, like
+  `slack:T024BE7LD | google:northwind.example`), added with the `identify` operation, which
+  needs no `rules:write` scope. A client passes its id when it starts a session; the service
+  finds the matching work notebook, which sets the time zone and whose rules apply. An id that
+  matches no notebook comes back as unknown, so the agent asks the person and records it; an id
+  recorded in two notebooks is refused.
 - **Time zone.** Each notebook has a time zone (`timezone` in `my-rules.md` front matter;
   local mode defaults to the computer's). "Today", "overdue", "stale" and which daily log a
   change goes in are all computed in that zone.
@@ -252,8 +260,9 @@ starts a session, hears something that produces several items at once (a decisio
 news about a person), may mishear a name from a voice transcript, may retry after a timeout,
 and must ask the person before reorganizing anything.
 
-1. **One call to start a session.** `start_session` returns everything an agent needs to begin:
-   the combined profile, today's date and weekday in the notebook's time zone, the filing rules
+1. **One call to start a session.** `start_session` takes the workspace the conversation is in,
+   when the client knows it (a notebook, or the client's own id for the workspace), and returns
+   everything an agent needs to begin: the combined profile across the person's notebooks, today's date and weekday in the notebook's time zone, the filing rules
    for this notebook's space (from `docs/spaces.md` and any rules of its own), current focus,
    reminders to raise, counts of open, due and overdue items, and changes made by others
    (people on the dashboard, other agents) since this client's last session.
@@ -353,6 +362,7 @@ one notebook. Every write tool names one notebook.
 | `set_focus` | Replace the focus or this week's dates in `now.md`, or add a suggested move |
 | `rule` | Add or change a rule in `my-rules.md`; needs the `rules:write` scope |
 | `log` | Add a line to today's daily log |
+| `identify` | Record an id a client uses for this workspace (`source` and `id`, like `slack` and `T024BE7LD`), in a work notebook |
 
 Every write returns, per operation: the item ids, the lines as written, any warnings (new
 names, likely duplicates), and the change id.

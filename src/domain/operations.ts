@@ -30,11 +30,16 @@ import {
   renderSameAs,
   SAME_AS_MAX_LINKS,
   WORK_NOTEBOOK,
+  WORKSPACE_ID_SOURCE,
+  WORKSPACE_ID_VALUE,
+  parseWorkspaceIds,
+  renderWorkspaceIds,
 } from '../format/values.ts'
 import { type Batch } from './batch.ts'
 import {
   buildSrc,
   checkDate,
+  checkNoSecret,
   cleanName,
   checkFieldValue,
   checkQuote,
@@ -75,6 +80,8 @@ export async function runOperation(b: Batch, op: Operation): Promise<void> {
       return rule(b, op)
     case 'log':
       return log(b, op)
+    case 'identify':
+      return identify(b, op)
   }
 }
 
@@ -1032,4 +1039,49 @@ async function log(b: Batch, op: OperationOf<'log'>): Promise<void> {
   b.appendToSection(path, undefined, [line])
   b.resultItem(path, line)
   b.status('logged')
+}
+
+// ---------- identify ----------
+
+/**
+ * Records an id a client uses for this workspace, so later calls can name the workspace the
+ * client's way. It only adds to `workspace_ids` in this work notebook's my-rules.md, which
+ * needs no rules:write scope: it changes no rule.
+ */
+async function identify(b: Batch, op: OperationOf<'identify'>): Promise<void> {
+  if (b.notebook.space.kind !== 'workspace') {
+    throw new NotebookError(
+      'invalid_value',
+      "Workspace ids are recorded in a work notebook, to match a client's workspace to it.",
+    )
+  }
+  const source = op.source.trim()
+  const id = op.id.trim()
+  if (!WORKSPACE_ID_SOURCE.test(source)) {
+    throw new NotebookError(
+      'invalid_value',
+      'source is a short lowercase word, like slack, google or cv.',
+    )
+  }
+  if (!WORKSPACE_ID_VALUE.test(id)) {
+    throw new NotebookError(
+      'invalid_value',
+      "id is the client's id for the workspace, without spaces, quotes, brackets or |.",
+    )
+  }
+  checkNoSecret(id, 'id')
+  const path = 'my-rules.md'
+  b.checkWritable(path, { withoutRulesScope: true })
+  const current = frontMatterValue(b.copy.note(path)?.frontMatter ?? null, 'workspace_ids')
+  const parsed = current !== undefined ? parseWorkspaceIds(current) : { ids: [], invalid: [] }
+  if (parsed.invalid.length) {
+    throw new NotebookError(
+      'invalid_value',
+      `my-rules.md's workspace_ids has a part that isn't "<source>:<id>" ("${parsed.invalid[0]}"). Fix it first.`,
+    )
+  }
+  if (parsed.ids.some((x) => x.source === source && x.id === id)) return
+  b.setFrontMatter(path, 'workspace_ids', renderWorkspaceIds([...parsed.ids, { source, id }]))
+  b.status('updated')
+  b.describe(`Recorded the ${source} id for this workspace`)
 }
