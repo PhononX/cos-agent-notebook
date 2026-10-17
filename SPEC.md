@@ -1,0 +1,401 @@
+# Chief of Staff notebook: specification
+
+The Chief of Staff notebook is the memory of an AI chief of staff: an agent that keeps an
+accurate picture of one person's working world and makes sure nothing falls through. The
+service stores and organizes that picture the way a good chief of staff would: what the person
+owes, what they're waiting on, their projects, people, decisions, ideas, links and facts, and
+how they like to work. It is deliberately opinionated about that structure; it is not a
+general-purpose memory store. Agents read and write it through MCP tools and an HTTP API. People see
+it through a web dashboard, or open the files directly. The record is always a folder of plain
+Markdown that the person can download, sync, or walk away with.
+
+This document describes what to build. It is the source of truth for the service's design;
+change it when the design changes.
+
+## Why it exists
+
+- **Memory that outlives the conversation.** Assistants forget between sessions and keep what
+  they learn inside one tool. The notebook keeps it in one place any assistant can use.
+- **Structure, not a pile of notes.** General memory stores keep whatever the model writes. This
+  one knows what a commitment is, who it's owed to, when it went stale, and who changed it.
+- **Agents organize, people stay in charge.** Agents capture and tidy; every change records who
+  made it; nothing is deleted except by an explicit retention or purge rule.
+- **Open and private.** Plain Markdown is the record. Nothing is locked in a database, and the
+  service never sends content to an AI model.
+
+## Principles
+
+1. **Markdown is the record.** Everything the service knows is in the files. Indexes, caches
+   and embeddings are derived from them and can be deleted and rebuilt at any time. Test: delete
+   every derived store, rebuild from the folder, lose nothing.
+2. **One writer.** Every change, from any client, goes through the same domain layer: the same
+   checks, the same provenance, the same history.
+3. **The service organizes; agents think.** The service holds schema, rules, history and
+   queries. It contains no language model and makes no judgment calls. Anything that needs
+   judgment (summarizing, merging, deciding an idea is now a project) is done by an agent that
+   calls the service's tools.
+4. **Thin adapters.** HTTP, MCP and git are adapters onto the domain layer with no logic of
+   their own, so a change gets the same treatment however it arrives.
+5. **One codebase, local or hosted.** The same service runs for one person on their own
+   computer or for many people on a server. Hosting is added through the extension points below,
+   not through forks or flags scattered through the code.
+
+## Non-goals
+
+- No language model inside the service, for writing, summarizing or classifying. (A local
+  embedding model for search is allowed; see Search.)
+- No billing, payments, plans or pricing. A hosted deployment adds those around the service.
+- No agent behavior: when to capture, how to brief, how to speak. That lives in agent plugins
+  that call this service.
+- No integration with any specific identity provider. Authentication is generic (see Auth).
+
+## Concepts
+
+| Term | Meaning |
+| --- | --- |
+| Notebook | One person's folder of Markdown files, plus its history. The unit of storage, access and deletion. |
+| Note | One Markdown file in a notebook. |
+| Item | One list line in a note (an action, a waiting item, a decision, a link…), with its fields. |
+| Field | An inline `[key:: value]` on an item, or a front-matter key on a note. |
+| Client | Anything that calls the service: an agent, the dashboard, a sync engine. Each has its own token and scopes. |
+| Actor | Who made a change: a client, acting for a person. Recorded on every write. |
+| Provenance | The `[src:: <source> <date> <link?>]` field on an item, saying where it came from. |
+
+## Notebook format
+
+The notebook layout and line format are defined in `docs/notebook-format.md`. Version it, and
+treat it as a public contract: agents, the dashboard and people editing in Obsidian all rely on it.
+
+Starting point: the format used by the Chief of Staff plugin in `PhononX/claude-plugins`
+(`plugins/cos/skills/capture/notes-format.md`). Copy its layout, line and field rules into
+`docs/notebook-format.md`, and leave out the parts that tell an agent how to behave (when to
+capture, how to write briefs). In summary:
+
+- Files: `now.md`, `brief.md`, `catch-up.md`, `nudges.md`, `inbox.md`, `actions.md`,
+  `waiting.md`, `ideas.md`, `links.md`, `facts.md`, `decisions.md`; folders `projects/`,
+  `areas/`, `people/`, `drafts/` (one note per name); `log/YYYY-MM-DD.md`; `archive/YYYY-MM.md`;
+  and the profile files `about-me.md`, `my-rules.md`, `sources.md`.
+- Items are list lines: plain sentence first, then inline fields, for example
+  `- [ ] Send the deck to [[Dana Whitfield]] [due:: 2026-10-16] [src:: cv 2026-10-13]`.
+  An item may carry indented `>` quote lines beneath it.
+- Notes link with `[[Name]]` (Obsidian-compatible). Fields use Dataview inline syntax.
+- Dates are `YYYY-MM-DD`, times are 24-hour `HH:MM`.
+- Nothing is deleted in normal use: finished and stale items move to `archive/` with `why`,
+  `archived` and `from` fields.
+
+Requirements:
+
+- **Lossless round trip.** Parsing then serializing an unchanged file gives back identical
+  bytes. Edits change only the lines they touch.
+- **Tolerant reading, strict writing.** Files people edit by hand may not fit the format. The
+  service reads them without failing, shows what it can, and reports lines it can't parse. Its
+  own writes are always valid.
+- **Item ids.** Every item has a short id (6 characters) derived from its note path and exact
+  text, plus an occurrence number when identical lines repeat. Ids are not written into the
+  files, so they stay clean for people. An id stays the same until that line changes; every
+  write returns the new id. A write that targets an id that no longer exists is refused with
+  the item's current text, never applied to whatever line is there now.
+
+## Architecture
+
+```
+  Dashboard ──HTTP──┐
+  Agents ─────MCP───┼──► Domain layer ──► Storage (Markdown + git history)
+  Sync engine ─git──┘     (schema, rules,      │
+                           lifecycle, history,  └─► Derived indexes (search, backlinks)
+                           queries, profile)
+```
+
+### Domain layer (all the logic)
+
+- **Schema and checks.** Validate every write against the format. Refuse malformed writes with
+  a clear reason; set aside malformed lines that arrive by sync in a review note rather than
+  dropping them.
+- **Lifecycle.** Items are open, then done or stale, then archived with a reason.
+- **Provenance and actor.** Add `[src:: …]` when a write lacks it. Record the actor on every
+  change.
+- **History.** Every successful write is one git commit: author = the actor, message = a
+  one-line summary of the change. Writes to one notebook are serialized.
+- **Daily log.** Each write appends a short line to `log/YYYY-MM-DD.md` saying what changed and
+  who did it, so agents reading the log see changes made by people and other agents.
+- **Review candidates.** Computed without AI: items untouched for N days (from `stale_days` in
+  `my-rules.md`), likely duplicates (normalized text similarity), ideas mentioned several times,
+  waiting items never nudged, actions past due.
+- **Profile.** Combine the defaults, `about-me.md` and `my-rules.md` (rules win) into one
+  profile that agents load at the start of a session.
+- **Time zone.** Each notebook has a time zone (`timezone` in `my-rules.md` front matter;
+  local mode defaults to the computer's). "Today", "overdue", "stale" and which daily log a
+  change goes in are all computed in that zone.
+
+### Storage and history
+
+- One git repository per notebook. Git is the open-source version-control tool and protocol,
+  not GitHub; repositories live on the service's own storage. People never need to know it's
+  there.
+- Use the system `git` binary. Plumbing commands are fine.
+- **Retention:** a scheduled job keeps every commit from the last N days (configurable, default
+  90) and collapses everything older into one starting commit:
+  1. `git rev-list -1 --before=<cutoff> main`
+  2. `git commit-tree <cutoff>^{tree}` → new parentless root
+  3. `git rebase --onto <new-root> <cutoff> main --committer-date-is-author-date`
+  4. `git reflog expire --expire=now --all && git gc --prune=now`
+- **Purge:** remove a file, or replace text, across all history (for example, a password
+  captured by mistake), then the same cleanup as step 4.
+- **Delete notebook:** removes the repository, derived indexes and any cached copies.
+
+### Search
+
+Three layers, ranked together:
+
+1. **Structured filters:** person, project, area, file, status, field values, date range.
+2. **Keyword:** full-text search across every note.
+3. **Semantic (optional, off by default):** a small embedding model running inside the service
+   process or on the same host. No content leaves the service. Embeddings are derived data:
+   rebuilt from the files, and deleted with the notebook.
+
+## Designing for agents
+
+Agents are the main users of this service, so the tool interface is designed around how an
+agent actually works in a conversation, not around the files. A typical exchange: the agent
+starts a session, hears something that produces several items at once (a decision, an action,
+news about a person), may mishear a name from a voice transcript, may retry after a timeout,
+and must ask the person before reorganizing anything.
+
+1. **One call to start a session.** `start_session` returns everything an agent needs to begin:
+   the combined profile, today's date and weekday in the notebook's time zone, current focus,
+   reminders to raise, counts of open, due and overdue items, and changes made by others
+   (people on the dashboard, other agents) since this client's last session.
+2. **One call per exchange.** `apply_changes` takes a list of operations and applies them
+   atomically as one commit: all succeed or none do. An exchange that files a decision, an
+   action and a person update is one call and one history entry.
+3. **Structured fields in, formatted lines out.** Agents pass text, person, project, due date,
+   source and so on as separate fields. The service writes the `[[links]]` and `[key:: value]`
+   fields. Agents never format lines by hand.
+4. **Address items by id or by text.** Every read returns item ids. An operation can instead
+   name an item by a phrase (`"match": "send the deck to Dana"`, optionally limited to a file).
+   If the phrase matches no item or more than one, the whole call is refused and the response
+   lists the candidates with their ids. This also works for agents that read the files directly
+   and have no ids.
+5. **Names are checked.** A person, project or area name that is close to an existing one but
+   not the same ("Dana Whitfeld") is refused with the closest matches, so transcription errors
+   don't create duplicate people. A genuinely new name is accepted and reported as new.
+   `resolve_names` looks names up ahead of time.
+6. **Retries are safe.** `apply_changes` accepts an `idempotency_key`; repeating a key within 24
+   hours returns the first result. Adding an open item whose normalized text matches an open item
+   in the same file returns the existing item, marked `duplicate`, instead of adding another.
+7. **Preview before reorganizing.** `apply_changes` accepts `dry_run: true` and returns exactly
+   what would change, as before and after lines, without writing. Agents use it to show the
+   person a merge, promotion or archive before asking.
+8. **Undo.** `undo` reverts one earlier change by its change id (a new commit, so history is
+   kept). Every write returns its change id.
+9. **Dates are absolute.** Tools take `YYYY-MM-DD` dates; the agent turns "Friday" into a date
+   using the date `start_session` returned. The service never guesses.
+10. **Reads fit in a context window.** Every read takes `limit` (default 50) and returns a
+    `cursor` for more. Items come back compact: `{id, file, text, done, fields, links}`. A whole
+    note is returned only by `read_note`, which can be limited to named sections.
+11. **Errors say how to fix them.** Every refusal names the problem and the next step: "No
+    item matches 'deck for Dana' in actions.md. Closest: a3f9k2 'Send the v3 pricing deck to
+    Dana Whitfield'."
+12. **Few tools, well described.** MCP clients load every tool description into the agent's
+    context, so the set is kept to about a dozen, with similar operations grouped as kinds of
+    one tool. Each description says when to use the tool, with an example call, and is enough
+    for an agent with no other instructions.
+13. **Content is data.** Notebook text may contain instructions planted by someone else (in a
+    quoted email, say). Tool results return content in clearly marked fields, never as text
+    addressed to the agent.
+
+## Interfaces
+
+### MCP
+
+Serve MCP over Streamable HTTP at `/mcp`, and over stdio for local use (`cos-notebook mcp`). Use the
+official MCP TypeScript SDK.
+
+**Read tools**
+
+| Tool | Purpose |
+| --- | --- |
+| `start_session` | Profile, today's date in the notebook's time zone, focus, reminders, open-item counts, changes by others since this client's last session |
+| `get_items` | Items of one or more kinds (`action`, `waiting`, `idea`, `link`, `fact`, `decision`, `inbox`, `catch_up`), filtered by person, project, area, status, due before or after, untouched for N days |
+| `read_note` | One note (person, project, area, draft, brief, profile file…), optionally limited to sections, with item ids |
+| `search` | Filters, keyword and (when enabled) semantic search; compact results with ids |
+| `resolve_names` | Closest existing people, projects and areas for one or more names, with scores |
+| `get_review_candidates` | Stale, duplicate, recurring, never-nudged and overdue items |
+| `get_changes` | Changes since a time, change id or cursor, with actors |
+
+**Write tools**
+
+| Tool | Purpose |
+| --- | --- |
+| `apply_changes` | The main write tool. A list of operations, applied atomically as one commit, with `idempotency_key` and `dry_run`. Operation kinds below |
+| `write_brief` | Start or add today's brief: its name, sent time, sections and numbered follow-ups with drafts |
+| `update_catch_up` | Add or update catch-up lines by thread link (raising `raised` each time it's mentioned), or close them with a reason |
+| `save_draft` | Save a new version of a draft, keeping the previous one in `drafts/.history/` and adding a history line |
+| `clear_nudges` | Remove reminders once they've been raised |
+| `undo` | Revert one earlier change by its change id |
+
+**`apply_changes` operation kinds**
+
+| Kind | Does |
+| --- | --- |
+| `add` | New item of a kind, from structured fields (`text`, `person`, `project`, `area`, `due`, `since`, `back`, `why`, `src`, `quote`) |
+| `complete` | Check off an action or waiting item, adding `done` |
+| `update` | Change an item's text or fields |
+| `archive` | Move an item to `archive/YYYY-MM.md` with `why` |
+| `move` | Attach an item to a project or area, or move it to another file |
+| `decide` | Append a decision; optionally mark an earlier one `superseded` |
+| `note` | Create a person, project or area note, set front-matter fields (`last_talked`, `status`), or append to a section |
+| `merge` | Combine duplicate items into one, keeping every `src` |
+| `promote` | Turn an idea into a project note, moving the idea's line into it |
+| `set_focus` | Replace the focus or this week's dates in `now.md`, or add a suggested move |
+| `rule` | Add or change a rule in `my-rules.md`; needs the `rules:write` scope |
+| `log` | Add a line to today's daily log |
+
+Every write returns, per operation: the item ids, the lines as written, any warnings (new
+names, likely duplicates), and the change id.
+
+### HTTP API
+
+JSON over HTTPS, versioned under `/v1`. The same operations as MCP (`apply_changes` is
+`POST /v1/notebooks/<id>/changes`), plus what the dashboard needs: list notes, read a note, the dashboard's data bundle, change feed. All write routes
+require `Content-Type: application/json`. Publish an OpenAPI description.
+
+### Git endpoint
+
+Serve smart HTTP at `/git/<notebook>.git` (via `git http-backend`). Off unless enabled for a
+notebook. Read-only by default; push is a separate scope. A push is processed like any other
+write: changed lines are validated, tagged as the person's, merged line by line, and lines
+changed on both sides are flagged as conflicts in a review note. The server's copy is
+authoritative.
+
+### Export
+
+`GET /v1/notebooks/<id>/export` returns a zip of the Markdown files (no git metadata).
+
+### Dashboard
+
+A web page served by the service at `/`, built only on the HTTP API with no privileged access.
+It shows today, actions, waiting, projects, people, ideas, links and facts, decisions, the
+daily log and the archive. It allows checking items off, adding items and editing notes.
+Starting point: the notebook page in `PhononX/claude-plugins`
+(`plugins/cos/templates/dotcos/brain-template.html`) and the edit operations in
+`plugins/cos/templates/dotcos/notebook-server.mjs` (toggle, replace, add, create, write).
+
+### Sync engine
+
+A command-line client (`cos-notebook sync <url> <folder>`) that keeps a local folder current for
+Obsidian, offline use and fast agent reads:
+
+- Pull when the server reports a change (server-sent events from `/v1/notebooks/<id>/events`),
+  or poll as a fallback.
+- Commit and push local edits after a short pause (default 5 seconds).
+- Fetch only the retention window (`--shallow-since`). When the server has rewritten history
+  (retention or purge), re-fetch and re-apply unpushed local edits.
+- Report conflicts the server flagged; never resolve them silently.
+
+## Auth
+
+Authentication is pluggable; the service ships two providers:
+
+- **Local:** one static token in a file with mode 0600, for single-user installs. The HTTP and
+  MCP endpoints bind to `127.0.0.1` by default, and check `Host` and `Origin` against a
+  configured allow-list (to block DNS rebinding; add a Tailscale hostname here, for example).
+- **OAuth resource server:** validates bearer tokens from a configured authorization server
+  (JWT with JWKS, or token introspection), following the MCP authorization spec, including
+  protected resource metadata. Maps the token's subject to an account.
+
+On top of either, the service issues its own **notebook tokens**: opaque, one per client or
+device, stored hashed, scoped, revocable, and listed in the dashboard. Scopes:
+
+| Scope | Allows |
+| --- | --- |
+| `notebook:read` | All read tools and routes |
+| `notebook:write` | Item and note writes |
+| `rules:write` | Changing `my-rules.md` |
+| `sections:<name>` | Limits reads to named sections, such as excluding `catch-up` and `people` |
+| `git:read`, `git:write` | Clone and push |
+| `admin` | Token management, retention, purge, delete |
+
+## Extension points for hosting
+
+A hosted deployment (a separate, private repository) runs this service as a dependency and
+plugs in through these interfaces. Define each as a small typed interface with the local
+implementation in this repository.
+
+| Interface | Local implementation | What a hosted deployment provides |
+| --- | --- | --- |
+| `NotebookStore` | Folders on local disk | Per-tenant volumes or object storage |
+| `KeyProvider` | None (disk encryption is the OS's job) | Per-notebook keys from a KMS; deleting the key makes all copies unreadable |
+| `AuthProvider` | Static token | OAuth with the hosted identity provider |
+| `Lock` | In-process mutex per notebook | Distributed lock, so several instances can serve one notebook safely |
+| `AccessLog` | Append-only file per notebook | Central store; shown to the person as "who read and changed what" |
+| `Entitlements` | Unlimited | Quotas (storage, clients, features) checked before writes; returns a clear "limit reached" error |
+| `EventBus` | In-process | Cross-instance change notifications for the sync engine and dashboard |
+
+Hosting also needs these properties throughout the code:
+
+- **Every route, tool and job is scoped to a notebook id.** Local mode has one notebook,
+  `default`.
+- **Stateless processes.** All state lives behind `NotebookStore`, `Lock` and the derived
+  indexes, so instances can be added or replaced.
+- **No content in logs.** Logs, errors and metrics carry ids, counts and timings, never note
+  text. Add a test that fails if a known string from a test notebook appears in the logs.
+- **Configuration from environment variables** (with an optional file), documented in one
+  place.
+- **Health and readiness endpoints** (`/healthz`, `/readyz`).
+
+## Security
+
+- Validate every path: inside the notebook, `.md` only, no `..`, no hidden folders.
+- Write atomically (temp file and rename) under the notebook lock.
+- Limit request bodies (default 2 MB) and rate-limit per token.
+- Never store passwords or keys in a notebook; refuse writes that match common secret patterns
+  and say why.
+- Treat notebook content as untrusted data in every response: it may contain text written to
+  manipulate an agent. Tool results return content as data, never as instructions.
+
+## Technology
+
+- TypeScript on Node.js (current LTS). Keep runtime dependencies few and well known.
+- The official MCP TypeScript SDK.
+- The system `git` binary.
+- Search: SQLite with FTS5 for filters and keywords; an optional local embedding model behind
+  an interface.
+- Tests: unit tests for the format parser (round-trip on a fixture notebook), the domain layer
+  and every tool; an end-to-end test that runs the service, connects an MCP client, writes, and
+  checks the git history and daily log.
+- **Agent evaluations** (test tooling, not part of the service): scripted conversations, each
+  with the notebook state it should produce, replayed through a real agent connected over MCP.
+  Measure tool calls per exchange, refused calls, duplicates created, items filed in the wrong
+  place and tokens read. Run them before each milestone is called done, and use the results to
+  change tool shapes and descriptions. They call a model, so they run on demand, not in CI.
+- Repository and package name: `cos-agent-notebook` (published to npm, so installers can fetch
+  it). The command it installs is `cos-notebook`.
+- One CLI: `cos-notebook serve`, `cos-notebook mcp` (stdio), `cos-notebook sync`, `cos-notebook init`,
+  `cos-notebook token create|list|revoke`, `cos-notebook retention run`, `cos-notebook export`.
+
+## Milestones
+
+1. **Format and domain core.** `docs/notebook-format.md`; parser and serializer with lossless
+   round trip; validation; item ids; the `apply_changes` operations from structured fields,
+   atomic, with dry run, idempotency, duplicate and name checks; provenance; git commit per
+   change; undo; daily log; time zone. A fixture notebook with every file type.
+2. **Local service.** HTTP API, local auth with Host and Origin checks, MCP over stdio and
+   Streamable HTTP with the full tool set, and the first agent evaluations.
+3. **Dashboard.** Port the existing notebook page onto the HTTP API.
+4. **Search and review.** Filters, keyword search, review candidates, change feed.
+5. **Openness.** Export, git endpoint, sync engine, retention, purge.
+6. **Ready to host.** Multi-notebook routing, notebook tokens and scopes, OAuth resource-server
+   mode, the extension-point interfaces, access log, no-content-in-logs test.
+7. **Semantic search** (optional module).
+
+Each milestone ends with passing tests and an updated README section on how to run it.
+
+## Open questions
+
+- History storage: git inside the service (current plan), or current files plus a database
+  change log, with git used only for export.
+- Retention defaults: 30 or 90 days of individual changes; how long archived items are kept.
+- Which local embedding model to use, and at what notebook size semantic search is worth
+  enabling by default.
+- License: AGPL (prevents a closed hosted copy) or MIT/Apache (wider adoption).
