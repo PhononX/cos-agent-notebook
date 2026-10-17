@@ -7,9 +7,17 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   {
     rules: {
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', ignoreRestSiblings: true },
+      ],
       'no-console': 'error',
     },
+  },
+  {
+    // Tests spell out notebook lines, where the exact spaces are the point.
+    files: ['test/**/*.ts'],
+    rules: { 'no-regex-spaces': 'off' },
   },
   {
     files: ['src/cli/**/*.ts', 'eslint.config.js'],
