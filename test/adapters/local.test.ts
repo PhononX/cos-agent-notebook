@@ -200,6 +200,10 @@ describe('local service with git', () => {
       [8, 8, 9],
     )
     assert.equal(note.items[0]!.done, null)
+    assert.deepEqual(note.items[0]!.quote, [
+      'Something about Stripe changing invoices. Might matter for pricing, not sure.',
+    ])
+    assert.deepEqual(note.items[1]!.quote, [])
   })
 
   it('keeps note text out of the logs', async () => {

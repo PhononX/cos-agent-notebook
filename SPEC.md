@@ -128,12 +128,14 @@ history: someone in two workspaces has three notebooks, one per space, kept apar
   could purge their own items could also clear work records, so they can't. This is why the
   agent asks when an item's side isn't clear.
 - **Mistakes in the personal notebook are the person's to fix.** The person can purge anything
-  from their own notebook, history included, at any time. Work content filed there by mistake is
-  refiled so the person doesn't keep company information outside the workspace: the agent adds
-  it to the right work notebook first, and only once that has succeeded purges it from the
-  personal notebook. These are two calls, one per notebook; the service never moves anything
-  between notebooks itself. Purging needs the `admin` scope, which on a personal notebook only the
-  person holds, so an agent purges only with the person's approval.
+  from their own notebook, history included, at any time (`purge`). Work content filed there by
+  mistake is refiled (`refile`) so the person doesn't keep company information outside the
+  workspace: the service copies each item exactly into the right work notebook, and only once
+  that change is committed purges it from the personal notebook. If the purge fails, the item is
+  safe in the work notebook and the call can be repeated to finish. `refile` is the only write
+  that touches two notebooks, and it only goes from personal to work. The work notebook gets no
+  marker of where the item came from. Purging needs the `admin` scope, which on a personal
+  notebook only the person holds, so an agent purges or refiles only with the person's approval.
 - **Notebooks never move between spaces.** A work notebook is created in its workspace and
   stays there; a personal notebook can't be moved into a workspace, or a work notebook out to a
   person or into another workspace. Joining a new workspace starts a new, empty notebook there.
@@ -273,7 +275,8 @@ and must ask the person before reorganizing anything.
 9. **Dates are absolute.** Tools take `YYYY-MM-DD` dates; the agent turns "Friday" into a date
    using the date `start_session` returned. The service never guesses.
 10. **Reads fit in a context window.** Every read takes `limit` (default 50) and returns a
-    `cursor` for more. Items come back compact: `{id, notebook, file, text, done, fields, links}`.
+    `cursor` for more. Items come back compact:
+    `{id, notebook, file, text, done, fields, links, quote}`.
     A whole note is returned only by `read_note`, which can be limited to named sections.
 11. **Errors say how to fix them.** Every refusal names the problem and the next step: "No
     item matches 'deck for Dana' in actions.md. Closest: a3f9k2 'Send the v3 pricing deck to
@@ -319,6 +322,8 @@ one notebook. Every write tool names one notebook.
 | `save_draft` | Save a new version of a draft, keeping the previous one in `drafts/.history/` and adding a history line |
 | `clear_nudges` | Remove reminders once they've been raised |
 | `undo` | Revert one earlier change by its change id |
+| `purge` | Remove items (by id or phrase), a whole note, or a piece of text from the files and from all history. Takes `dry_run`. Needs `admin`: on a personal notebook only the person holds it, on a work notebook a workspace admin. The daily log records what kind of thing was purged and by whom, never the content |
+| `refile` | Move items from the personal notebook into one of the person's work notebooks: copy each exactly (sentence, fields, `src`, quote, done state), then purge it from the personal notebook. Personal to work only. Needs write access to the work notebook and `admin` on the personal one |
 
 **`apply_changes` operation kinds**
 
@@ -477,7 +482,7 @@ Hosting also needs these properties throughout the code:
    Streamable HTTP with the full tool set, and the first agent evaluations.
 3. **Dashboard.** Port the existing notebook page onto the HTTP API.
 4. **Search and review.** Filters, keyword search, review candidates, change feed.
-5. **Openness.** Export, git endpoint, sync engine, retention, purge.
+5. **Openness.** Export, git endpoint, sync engine, retention, `purge` and `refile`.
 6. **Ready to host.** Multi-notebook routing across personal and workspace spaces, the
    `workspace:admin` scope, notebook tokens and scopes, OAuth resource-server
    mode, the extension-point interfaces, access log, no-content-in-logs test.

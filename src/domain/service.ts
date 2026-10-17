@@ -93,6 +93,8 @@ export interface CompactItem {
   done: boolean | null
   fields: Record<string, string | string[]>
   links: string[]
+  /** The indented quote lines under the item, without their `>`. */
+  quote: string[]
 }
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000
@@ -684,6 +686,7 @@ export function compactItem(item: Item, notebook: NotebookRef): CompactItem {
     done: item.checked,
     fields,
     links: item.links,
+    quote: item.quote,
   }
 }
 
