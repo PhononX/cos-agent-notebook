@@ -22,7 +22,8 @@
     "format": "prettier --write .",
     "test": "node --test \"test/**/*.test.ts\"",
     "check": "npm run typecheck && npm run lint && npm test",
-    "cli": "node src/cli/main.ts"
+    "cli": "node src/cli/main.ts",
+    "prepublishOnly": "npm run check && npm run build"
   },
   "repository": {
     "type": "git",
