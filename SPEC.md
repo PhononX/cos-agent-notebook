@@ -115,9 +115,12 @@ Requirements:
 - **Provenance and actor.** Add `[src:: …]` when a write lacks it. Record the actor on every
   change.
 - **History.** Every successful write is one git commit: author = the actor, message = a
-  one-line summary of the change. Writes to one notebook are serialized.
+  one-line summary of the change, ending with a `Cos-Change: <change id>` trailer. Change ids
+  (`ch_` and 8 characters) are the service's own rather than commit hashes, so they survive
+  retention and purge rewriting history. Writes to one notebook are serialized.
 - **Daily log.** Each write appends a short line to `log/YYYY-MM-DD.md` saying what changed and
-  who did it, so agents reading the log see changes made by people and other agents.
+  who did it (`[by:: …]`) with its change id (`[change:: …]`), so agents reading the log see
+  changes made by people and other agents.
 - **Review candidates.** Computed without AI: items untouched for N days (from `stale_days` in
   `my-rules.md`), likely duplicates (normalized text similarity), ideas mentioned several times,
   waiting items never nudged, actions past due.
@@ -179,15 +182,19 @@ and must ask the person before reorganizing anything.
 5. **Names are checked.** A person, project or area name that is close to an existing one but
    not the same ("Dana Whitfeld") is refused with the closest matches, so transcription errors
    don't create duplicate people. A genuinely new name is accepted and reported as new.
-   `resolve_names` looks names up ahead of time.
+   `resolve_names` looks names up ahead of time. When a close name really is someone new, the
+   agent repeats the call with that name in `confirm_new_names`.
 6. **Retries are safe.** `apply_changes` accepts an `idempotency_key`; repeating a key within 24
-   hours returns the first result. Adding an open item whose normalized text matches an open item
-   in the same file returns the existing item, marked `duplicate`, instead of adding another.
+   hours returns the first result; the same key with a different request is refused, so a reused
+   key never hides a different change. Adding an open item whose normalized text matches an open
+   item in the same file returns the existing item, marked `duplicate`, instead of adding another.
 7. **Preview before reorganizing.** `apply_changes` accepts `dry_run: true` and returns exactly
    what would change, as before and after lines, without writing. Agents use it to show the
-   person a merge, promotion or archive before asking.
+   person a merge, promotion or archive before asking. The preview leaves out the daily log
+   line, which only a real change adds.
 8. **Undo.** `undo` reverts one earlier change by its change id (a new commit, so history is
-   kept). Every write returns its change id.
+   kept). Every write returns its change id. Daily log lines are kept, and a new one records the
+   undo. When later changes touched the same lines, undo is refused and names the files.
 9. **Dates are absolute.** Tools take `YYYY-MM-DD` dates; the agent turns "Friday" into a date
    using the date `start_session` returned. The service never guesses.
 10. **Reads fit in a context window.** Every read takes `limit` (default 50) and returns a
@@ -245,7 +252,7 @@ official MCP TypeScript SDK.
 | `move` | Attach an item to a project or area, or move it to another file |
 | `decide` | Append a decision; optionally mark an earlier one `superseded` |
 | `note` | Create a person, project or area note, set front-matter fields (`last_talked`, `status`), or append to a section |
-| `merge` | Combine duplicate items into one, keeping every `src` |
+| `merge` | Combine duplicate items into one, keeping every `src`; the others are archived with `why:: merged` |
 | `promote` | Turn an idea into a project note, moving the idea's line into it |
 | `set_focus` | Replace the focus or this week's dates in `now.md`, or add a suggested move |
 | `rule` | Add or change a rule in `my-rules.md`; needs the `rules:write` scope |
