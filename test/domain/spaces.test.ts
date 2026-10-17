@@ -15,6 +15,8 @@ import {
   workspaceNotebook,
 } from '../../src/domain/notebook-ref.ts'
 import { NotebookService } from '../../src/domain/service.ts'
+import { parseNote } from '../../src/format/note.ts'
+import { parseSameAs, renderSameAs } from '../../src/format/values.ts'
 import { refusal } from '../helpers/refusal.ts'
 import { AGENT, NOW } from '../helpers/service.ts'
 
@@ -141,5 +143,163 @@ describe('personal and workspace notebooks', () => {
       AGENT,
     )
     assert.deepEqual(r.new_names, ['Dana Whitfeld'])
+  })
+})
+
+describe('the same person across spaces', () => {
+  it('parse and render same_as links, and check them in person notes only', () => {
+    const links = parseSameAs(
+      'workspace:northwind:alex/Dana Whitfield | workspace:fernhill:alex/D. Whitfield',
+    )
+    assert.deepEqual(links, [
+      { notebook: 'workspace:northwind:alex', name: 'Dana Whitfield' },
+      { notebook: 'workspace:fernhill:alex', name: 'D. Whitfield' },
+    ])
+    assert.equal(
+      renderSameAs(links!),
+      'workspace:northwind:alex/Dana Whitfield | workspace:fernhill:alex/D. Whitfield',
+    )
+    for (const bad of [
+      'Dana Whitfield',
+      'workspace:northwind/Dana',
+      'workspace:northwind:alex/a:b',
+      'team:x:y/Dana',
+    ]) {
+      assert.equal(parseSameAs(bad), null, bad)
+    }
+    const stray = parseNote(
+      'projects/Q4 Launch.md',
+      '---\nsame_as: workspace:northwind:alex/Q4\n---\n# Q4\n',
+    )
+    assert.match(stray.problems[0]!.message, /only for person notes/)
+  })
+
+  it('a personal note can be a stub that points to the work note', async () => {
+    const { store, service } = await twoNotebooks()
+    await service.applyChanges(
+      work,
+      {
+        operations: [
+          {
+            op: 'note',
+            type: 'person',
+            name: 'Dana Whitfield',
+            front_matter: { role: 'Head of Sales' },
+          },
+        ],
+      },
+      AGENT,
+    )
+    await service.applyChanges(
+      personal,
+      {
+        operations: [
+          {
+            op: 'note',
+            type: 'person',
+            name: 'Dana Whitfield',
+            same_as: [{ notebook: 'workspace:northwind:alex', name: 'Dana Whitfield' }],
+          },
+        ],
+      },
+      AGENT,
+    )
+    assert.equal(
+      await store.read(personal, 'people/Dana Whitfield.md'),
+      '---\nsame_as: workspace:northwind:alex/Dana Whitfield\n---\n# Dana Whitfield\n',
+    )
+    // A second workspace adds to the links instead of replacing them, and repeats are ignored.
+    await service.init(workspaceNotebook('fernhill', 'alex'), { actor: AGENT })
+    await service.applyChanges(
+      personal,
+      {
+        operations: [
+          {
+            op: 'note',
+            type: 'person',
+            name: 'Dana Whitfield',
+            same_as: [
+              { notebook: 'workspace:fernhill:alex', name: 'D. Whitfield' },
+              { notebook: 'workspace:northwind:alex', name: 'Dana Whitfield' },
+            ],
+          },
+        ],
+      },
+      AGENT,
+    )
+    const note = await service.readNote(personal, 'people/Dana Whitfield.md')
+    assert.deepEqual(note.same_as, [
+      { notebook: 'workspace:northwind:alex', name: 'Dana Whitfield' },
+      { notebook: 'workspace:fernhill:alex', name: 'D. Whitfield' },
+    ])
+    // From the work side, the agent finds the person's own note by reading the personal notebook.
+    const found = await service.findLinkedPeople(personal, {
+      notebook: work,
+      name: 'Dana Whitfield',
+    })
+    assert.deepEqual(
+      found.map((f) => f.path),
+      ['people/Dana Whitfield.md'],
+    )
+    assert.deepEqual(
+      await service.findLinkedPeople(personal, { notebook: work, name: 'Sam Okafor' }),
+      [],
+    )
+  })
+
+  it('are never written in a workspace notebook, and only point to work notebooks', async () => {
+    const { service } = await twoNotebooks()
+    const link = [{ notebook: 'personal:alex:default', name: 'Dana' }]
+    let e = await refusal(
+      service.applyChanges(
+        work,
+        { operations: [{ op: 'note', type: 'person', name: 'Dana Whitfield', same_as: link }] },
+        AGENT,
+      ),
+    )
+    assert.match(e.message, /only in the person's personal notebook/)
+    e = await refusal(
+      service.applyChanges(
+        work,
+        {
+          operations: [
+            {
+              op: 'note',
+              type: 'person',
+              name: 'Dana Whitfield',
+              front_matter: { same_as: 'workspace:fernhill:alex/Dana' },
+            },
+          ],
+        },
+        AGENT,
+      ),
+    )
+    assert.match(e.message, /only in the person's personal notebook/)
+    e = await refusal(
+      service.applyChanges(
+        personal,
+        { operations: [{ op: 'note', type: 'person', name: 'Dana Whitfield', same_as: link }] },
+        AGENT,
+      ),
+    )
+    assert.match(e.message, /isn't a workspace notebook/)
+    e = await refusal(
+      service.applyChanges(
+        personal,
+        {
+          operations: [
+            {
+              op: 'note',
+              type: 'project',
+              name: 'House move',
+              same_as: [{ notebook: 'workspace:northwind:alex', name: 'Relocation' }],
+            },
+          ],
+        },
+        AGENT,
+      ),
+    )
+    assert.match(e.message, /person notes/)
+    await assert.rejects(service.findLinkedPeople(work, { notebook: work }), /personal notebook/)
   })
 })

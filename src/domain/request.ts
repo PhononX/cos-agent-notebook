@@ -91,6 +91,12 @@ const NoteOp = z.strictObject({
   front_matter: fieldChanges.optional(),
   section: z.string().optional(),
   append: z.array(Entry).max(50).optional(),
+  same_as: z
+    .array(z.strictObject({ notebook: z.string(), name: z.string() }))
+    .min(1)
+    .max(10)
+    .optional()
+    .describe("Personal notebook only: the same person's note in a workspace notebook"),
 })
 
 const MergeOp = z.strictObject({

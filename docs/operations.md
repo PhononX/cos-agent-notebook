@@ -179,12 +179,20 @@ earlier decision (`id` or `match`) to mark `superseded`.
 ### note
 
 Creates a person, project or area note (`type` and `name`), or changes an existing note (`file`,
-such as `about-me.md`). `front_matter` sets keys (`null` removes one); `append` adds lines, as
+such as `about-me.md`). In a personal notebook, `same_as` (a list of `{ notebook, name }`) links a
+person note to the same person's note in work notebooks; links are added to the ones already
+there. Work notebooks refuse `same_as`. `front_matter` sets keys (`null` removes one); `append` adds lines, as
 strings or `{ text, person, project, area, src, quote }`, at the end of `section` (created if
 missing) or of the note. A new project gets `status: active`. `my-rules.md` is changed with `rule`.
 
 ```json
 { "op": "note", "type": "person", "name": "Sam Okafor", "front_matter": { "role": "Recruiter" }, "append": ["Runs the Senior PM search"] }
+```
+
+In the personal notebook, a short entry for a colleague:
+
+```json
+{ "op": "note", "type": "person", "name": "Dana Whitfield", "same_as": [{ "notebook": "workspace:northwind:alex", "name": "Dana Whitfield" }] }
 ```
 
 ### merge

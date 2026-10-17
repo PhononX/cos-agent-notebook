@@ -4,9 +4,9 @@
 import { createHash } from 'node:crypto'
 import { renderFrontMatterEntry, frontMatterValue } from '../format/front-matter.ts'
 import { CHANGE_ID, newChangeId } from '../format/ids.ts'
-import { STARTER_FILES, logPath, newNoteLines, pathProblem } from '../format/layout.ts'
+import { STARTER_FILES, logPath, newNoteLines, noteName, pathProblem } from '../format/layout.ts'
 import { parseNote, type Item } from '../format/note.ts'
-import { isTimeZone } from '../format/values.ts'
+import { isTimeZone, parseSameAs, type SameAs } from '../format/values.ts'
 import { actorAuthor, actorLabel, checkActor, hasScope, type Actor } from './actor.ts'
 import {
   Batch,
@@ -174,16 +174,56 @@ export class NotebookService {
     const text = await this.store.read(notebook, path)
     if (text === null) throw new NotebookError('not_found', `There is no note ${path}.`)
     const note = parseNote(path, text)
+    const sameAs = frontMatterValue(note.frontMatter, 'same_as')
     return {
       path,
       type: note.type,
       front_matter: Object.fromEntries(
         (note.frontMatter?.entries ?? []).map((e) => [e.key, e.value]),
       ),
+      /** The same person's notes in work notebooks (person notes in a personal notebook). */
+      same_as: sameAs !== undefined ? (parseSameAs(sameAs) ?? []) : [],
       items: note.items.map(compactItem),
       problems: note.problems.map(({ line, message }) => ({ line, message })),
       text,
     }
+  }
+
+  /**
+   * The person notes in a personal notebook that link to a note in a work notebook: how an agent
+   * reading a work note finds the person's own note on the same person. Reads only the personal
+   * notebook.
+   */
+  async findLinkedPeople(
+    personal: NotebookRef,
+    target: { notebook: NotebookRef; name?: string },
+  ): Promise<{ path: string; name: string; same_as: SameAs[] }[]> {
+    checkRef(personal)
+    checkRef(target.notebook)
+    if (personal.space.kind !== 'personal') {
+      throw new NotebookError(
+        'invalid_value',
+        'Links between people are kept in a personal notebook; pass one.',
+      )
+    }
+    await this.requireNotebook(personal)
+    const want = formatRef(target.notebook)
+    const copy = await WorkingCopy.load(this.store, personal)
+    const out: { path: string; name: string; same_as: SameAs[] }[] = []
+    for (const path of copy.paths()) {
+      const note = copy.note(path)!
+      if (note.type !== 'person') continue
+      const value = frontMatterValue(note.frontMatter, 'same_as')
+      const links = value !== undefined ? (parseSameAs(value) ?? []) : []
+      if (
+        links.some(
+          (l) => l.notebook === want && (target.name === undefined || l.name === target.name),
+        )
+      ) {
+        out.push({ path, name: noteName(path)!, same_as: links })
+      }
+    }
+    return out
   }
 
   async listItems(notebook: NotebookRef, opts: { file?: string } = {}): Promise<CompactItem[]> {
@@ -239,6 +279,7 @@ export class NotebookService {
         const { timezone, warning } = this.timezoneOf(copy)
         const now = zonedNow(this.clock.now(), timezone)
         const batch = new Batch({
+          notebook,
           copy,
           actor,
           now,

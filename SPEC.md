@@ -118,6 +118,17 @@ history: someone in two workspaces has three notebooks, one per space, kept apar
 - **Notebooks never move between spaces.** A work notebook is created in its workspace and
   stays there; a personal notebook can't be moved into a workspace, or a work notebook out to a
   person or into another workspace. Joining a new workspace starts a new, empty notebook there.
+- **The personal notebook knows everyone.** It has a person note for everyone the person deals
+  with in any space. For someone known mainly outside work it's the full record. For a colleague
+  it can be a short entry that points, with `same_as`, to their note in each work notebook:
+  `same_as: workspace:northwind:alex/Dana Whitfield | workspace:fernhill:alex/D. Whitfield`. A
+  short entry holds what identifies the person and anything personal; what was learned at work
+  stays in the work note. Links live only in the personal notebook: work notebooks never point
+  to a personal notebook or to another workspace, so no workspace learns about the person's
+  other spaces. The service checks each link's form, never follows it into another notebook, and
+  offers a lookup (`findLinkedPeople`) so an agent reading a work note can find the personal one.
+  Keeping the personal notebook complete is the agent's job, one call per notebook. Links are
+  for people only for now.
 - **One notebook per call.** Every read and write names exactly one notebook. No operation reads
   one notebook to write another, moves or copies items between them, or checks names across
   them. A client with access to both (an agent working for a person at work) calls each

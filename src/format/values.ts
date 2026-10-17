@@ -92,10 +92,44 @@ export function frontMatterProblem(noteType: string, key: string, value: string)
   if (key === 'meeting_prep' && !['offer', 'auto', 'off'].includes(value)) {
     return 'meeting_prep should be offer, auto or off'
   }
+  if (key === 'same_as' && noteType !== 'person') return 'same_as is only for person notes'
+  if (key === 'same_as' && !parseSameAs(value)) {
+    return 'same_as should be links like "workspace:northwind:alex/Dana Whitfield", separated by " | "'
+  }
   if (key === 'timezone' && !isTimeZone(value)) {
     return 'timezone should be an IANA time zone name, like Europe/Berlin'
   }
   return null
+}
+
+/**
+ * A `same_as` link on a person note: the same person's note in another notebook, written
+ * `<notebook>/<note name>`, like `workspace:northwind:alex/Dana Whitfield`. Several are
+ * separated by ` | ` (names can't contain `|`).
+ */
+export interface SameAs {
+  notebook: string
+  name: string
+}
+
+const NOTEBOOK_NAME = /^(?:personal|workspace):[a-z0-9][a-z0-9_-]{0,62}:[a-z0-9][a-z0-9_-]{0,62}$/
+
+export function parseSameAs(value: string): SameAs[] | null {
+  const out: SameAs[] = []
+  for (const part of value.split('|')) {
+    const link = part.trim()
+    const slash = link.indexOf('/')
+    if (slash < 0) return null
+    const notebook = link.slice(0, slash)
+    const name = link.slice(slash + 1)
+    if (!NOTEBOOK_NAME.test(notebook) || nameProblem(name)) return null
+    out.push({ notebook, name })
+  }
+  return out
+}
+
+export function renderSameAs(links: readonly SameAs[]): string {
+  return links.map((l) => `${l.notebook}/${l.name}`).join(' | ')
 }
 
 export function isTimeZone(tz: string): boolean {

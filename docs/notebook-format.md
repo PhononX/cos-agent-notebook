@@ -321,7 +321,12 @@ v3 pricing and the new onboarding live for all customers.
 ## Notes
 - A referral program: a free seat for each team a customer brings in [back:: when v3 pricing is set] [src:: cv 2026-10-02]
 ```
-Person front matter: `role`, `org`, `last_talked` (a date), `rhythm`, and others as needed.
+Person front matter: `role`, `org`, `last_talked` (a date), `rhythm`, and others as needed. In a
+personal notebook, `same_as` links a person note to the same person's note in work notebooks:
+`<notebook>/<note name>`, several separated by ` | `, like
+`same_as: workspace:northwind:alex/Dana Whitfield | workspace:fernhill:alex/D. Whitfield`. A
+personal notebook has a note for everyone in any of the person's spaces: the full record, or a
+short entry that points to the work notes. Work notebooks never have `same_as`.
 Project `status` is `active`, `paused`, `done` or `dropped`; `due` is a date; `area` names an
 area. A finished project keeps its note with `status: done` and a line saying how it ended.
 Areas have no status or due date. An idea promoted into a project moves into its "Notes" section.

@@ -16,6 +16,7 @@ import { actorLabel, hasScope, type Actor } from './actor.ts'
 import { NotebookError } from './errors.ts'
 import { checkName, type KnownName, type NameType } from './names.ts'
 import { nameProblem } from '../format/values.ts'
+import type { NotebookRef } from './notebook-ref.ts'
 import type { Target } from './request.ts'
 import { phraseMatches, textSimilarity } from './similarity.ts'
 import type { ZonedNow } from './time.ts'
@@ -94,14 +95,18 @@ export class Batch {
   private known: KnownName[] | null = null
   /** Ids changed earlier in this call, so later operations can still use the id they read. */
   private readonly aliases = new Map<string, { path: string; raw: string }>()
+  /** The one notebook this call writes. */
+  readonly notebook: NotebookRef
 
   constructor(opts: {
+    notebook: NotebookRef
     copy: WorkingCopy
     actor: Actor
     now: ZonedNow
     confirmNewNames?: readonly string[]
     staleLookup: StaleLookup
   }) {
+    this.notebook = opts.notebook
     this.copy = opts.copy
     this.actor = opts.actor
     this.now = opts.now

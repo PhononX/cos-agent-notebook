@@ -18,7 +18,18 @@ import {
 } from '../format/layout.ts'
 import type { Item } from '../format/note.ts'
 import { renderFrontMatterEntry } from '../format/front-matter.ts'
-import { DATE, KEY, fieldValueProblem, frontMatterProblem } from '../format/values.ts'
+import {
+  DATE,
+  KEY,
+  fieldValueProblem,
+  frontMatterProblem,
+  nameProblem,
+  parseSameAs,
+  renderSameAs,
+  type SameAs,
+} from '../format/values.ts'
+import { frontMatterValue } from '../format/front-matter.ts'
+import { formatRef, parseRef } from './notebook-ref.ts'
 import { type Batch } from './batch.ts'
 import {
   buildSrc,
@@ -602,12 +613,53 @@ function frontMatterValues(
         `"${k}" isn't a front matter key: use lowercase letters, digits and _.`,
       )
     }
+    if (k === 'same_as') checkSameAsAllowed(b)
     if (v === null) return [k, null]
     const value = checkText(String(v), k, 300)
     const problem = frontMatterProblem(type, k, value)
     if (problem) throw new NotebookError('invalid_value', `${problem}.`)
     return [k, value]
   })
+}
+
+/** Cross-links between spaces live only in the personal notebook, so no workspace learns of another space. */
+function checkSameAsAllowed(b: Batch): void {
+  if (b.notebook.space.kind !== 'personal') {
+    throw new NotebookError(
+      'invalid_value',
+      "Links to the same person in other notebooks (same_as) are kept only in the person's personal notebook, so no workspace learns about their other spaces. Add the link there instead.",
+    )
+  }
+}
+
+/** Adds same_as links to a person note in the personal notebook, keeping the ones it has. */
+function addSameAs(
+  b: Batch,
+  path: string,
+  links: readonly { notebook: string; name: string }[],
+): boolean {
+  checkSameAsAllowed(b)
+  const existing = frontMatterValue(b.copy.note(path)?.frontMatter ?? null, 'same_as')
+  const all: SameAs[] = existing ? (parseSameAs(existing) ?? []) : []
+  for (const link of links) {
+    const target = parseRef(link.notebook)
+    if (target.space.kind !== 'workspace') {
+      throw new NotebookError(
+        'invalid_value',
+        `same_as links point from the personal notebook to work notebooks; "${link.notebook}" isn't a workspace notebook.`,
+      )
+    }
+    const name = link.name
+      .trim()
+      .replace(/^\[\[(.*)\]\]$/, '$1')
+      .trim()
+    const problem = nameProblem(name)
+    if (problem)
+      throw new NotebookError('invalid_value', `The linked name "${link.name}" ${problem}.`)
+    const notebook = formatRef(target)
+    if (!all.some((l) => l.notebook === notebook && l.name === name)) all.push({ notebook, name })
+  }
+  return b.setFrontMatter(path, 'same_as', renderSameAs(all))
 }
 
 function createNamedNote(
@@ -664,6 +716,12 @@ async function note(b: Batch, op: OperationOf<'note'>): Promise<void> {
     status = 'created'
   } else {
     for (const [k, v] of front) if (b.setFrontMatter(path, k, v)) status = 'updated'
+  }
+  if (op.same_as) {
+    if (type !== 'person') {
+      throw new NotebookError('invalid_value', 'same_as links are for person notes.')
+    }
+    if (addSameAs(b, path, op.same_as) && status === 'unchanged') status = 'updated'
   }
   if (op.append?.length) {
     const lines: string[] = []
