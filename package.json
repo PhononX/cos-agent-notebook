@@ -1,0 +1,42 @@
+{
+  "name": "cos-agent-notebook",
+  "version": "0.1.0",
+  "description": "The Chief of Staff notebook: structured, plain-Markdown memory for AI chief-of-staff agents",
+  "type": "module",
+  "bin": {
+    "cos-notebook": "dist/cli/main.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "docs"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "check": "npm run typecheck && npm run lint && npm test",
+    "cli": "node src/cli/main.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PhononX/cos-agent-notebook.git"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.5",
+    "eslint": "^10.13.0",
+    "prettier": "^3.9.10",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.2"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  }
+}
