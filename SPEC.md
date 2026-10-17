@@ -148,6 +148,12 @@ history: someone in two workspaces has three notebooks, one per space, kept apar
   one-line summary of the change, ending with a `Cos-Change: <change id>` trailer. Change ids
   (`ch_` and 8 characters) are the service's own rather than commit hashes, so they survive
   retention and purge rewriting history. Writes to one notebook are serialized.
+- **Edits made outside the service.** People edit the files directly (in Obsidian, say). Before
+  each write and each undo, under the notebook lock, the service records any notes changed
+  outside it as their own change, authored "outside the service", with a daily log line naming
+  the files; the caller's change follows as a separate commit. The edits are recorded exactly as
+  they are, including lines that don't fit the format. This keeps every commit to what its
+  author did, and lets agents see changes made by others.
 - **Daily log.** Each write appends a short line to `log/YYYY-MM-DD.md` saying what changed and
   who did it (`[by:: …]`) with its change id (`[change:: …]`), so agents reading the log see
   changes made by people and other agents.

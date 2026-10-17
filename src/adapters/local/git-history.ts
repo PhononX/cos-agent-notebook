@@ -154,6 +154,22 @@ export class GitHistory implements History {
     }
   }
 
+  async outsideChanges(notebook: NotebookRef): Promise<string[]> {
+    const cwd = this.dirFor(notebook)
+    const { stdout } = await git(
+      ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames'],
+      { cwd },
+    )
+    // Each entry is "XY <path>"; anything git lists differs from the last commit.
+    return stdout
+      .toString('utf8')
+      .split('\0')
+      .filter((entry) => entry.length > 3)
+      .map((entry) => entry.slice(3))
+      .filter((path) => path.endsWith('.md') && !path.split('/').some((p) => p.startsWith('.')))
+      .sort()
+  }
+
   async recentVersions(
     notebook: NotebookRef,
     changes: number,

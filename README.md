@@ -26,6 +26,8 @@ Milestone 1 of 7 (format and domain core) is done:
   formatted lines out; atomic batches; dry run; idempotency keys; duplicate and close-name checks;
   provenance; one git commit per change; a daily log line per change; the notebook's time zone.
 - `undo` of any earlier change, as a new change.
+- Edits made directly to the files are recorded as their own change, "outside the service",
+  before the next write.
 - Personal and workspace notebooks: every call names one notebook by its space, and each space
   is stored apart (see "Personal and workspace notebooks" in `SPEC.md`).
 - `cos-notebook init`.

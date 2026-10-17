@@ -274,3 +274,92 @@ describe('segmented local layout', () => {
     )
   })
 })
+
+describe('edits made outside the service', () => {
+  it('are recorded as their own change before the next write', async () => {
+    const { dir, service } = await localFixture()
+    const actionsPath = join(dir, 'actions.md')
+    const handEdited = (await readFile(actionsPath, 'utf8')).replace(
+      '- [ ] Reply to [[Jordan Kim]]',
+      '- [ ] Call [[Jordan Kim]]',
+    )
+    await writeFile(actionsPath, handEdited)
+    await writeFile(join(dir, 'people', 'Sam Okafor.md'), '# Sam Okafor\n')
+    await rm(join(dir, 'areas', 'Hiring.md'))
+
+    const r = await service.applyChanges(
+      NB,
+      { operations: [{ op: 'add', kind: 'action', text: 'Book the venue' }] },
+      AGENT,
+    )
+    const outside = r.warnings.find((w) => w.code === 'outside_edits')!
+    assert.deepEqual(outside.files, ['actions.md', 'areas/Hiring.md', 'people/Sam Okafor.md'])
+
+    const [agentCommit, outsideCommit] = git(dir, 'log', '-2', '--format=%an|%s').trim().split('\n')
+    assert.equal(
+      outsideCommit,
+      'outside the service|Edited outside the service: actions.md, areas/Hiring.md, people/Sam Okafor.md',
+    )
+    assert.match(agentCommit!, /^claude-desktop for Alex\|Added "Book the venue"/)
+    // The hand edit is in the outside commit, not the agent's.
+    assert.match(
+      git(dir, 'show', 'HEAD~1', '--', 'actions.md'),
+      /\+- \[ \] Call \[\[Jordan Kim\]\]/,
+    )
+    assert.doesNotMatch(git(dir, 'show', 'HEAD', '--', 'actions.md'), /Jordan Kim/)
+    assert.equal(git(dir, 'status', '--porcelain'), '')
+    const log = await readFile(join(dir, 'log', `${TODAY}.md`), 'utf8')
+    assert.match(
+      log,
+      new RegExp(
+        `- 10:05 Edited outside the service: actions\\.md, areas/Hiring\\.md, people/Sam Okafor\\.md \\[by:: outside the service\\] \\[change:: ${outside.change_id}\\]\\n- 10:05 Added "Book the venue"`,
+      ),
+    )
+  })
+
+  it('keep hand-written lines that do not fit the format, as they are', async () => {
+    const { dir, service } = await localFixture()
+    await writeFile(join(dir, 'inbox.md'), '# Inbox\n\n- [due: soon] half typed [[link\n')
+    await service.applyChanges(NB, { operations: [{ op: 'log', text: 'Checked in' }] }, AGENT)
+    assert.equal(
+      git(dir, 'show', 'HEAD~1:inbox.md'),
+      '# Inbox\n\n- [due: soon] half typed [[link\n',
+    )
+  })
+
+  it('add nothing when nothing changed, and ignore hidden and non-note files', async () => {
+    const { dir, service } = await localFixture()
+    await writeFile(join(dir, 'notes.txt'), 'scratch')
+    await writeFile(join(dir, 'drafts', '.history', 'Board narrative', 'v2.md'), 'old')
+    const r = await service.applyChanges(
+      NB,
+      { operations: [{ op: 'add', kind: 'idea', text: 'A podcast' }] },
+      AGENT,
+    )
+    assert.ok(!r.warnings.some((w) => w.code === 'outside_edits'))
+    assert.equal(git(dir, 'rev-list', '--count', 'HEAD').trim(), '2')
+  })
+
+  it('are left alone by a dry run, and recorded before an undo', async () => {
+    const { dir, service } = await localFixture()
+    const first = await service.applyChanges(
+      NB,
+      { operations: [{ op: 'add', kind: 'idea', text: 'A podcast' }] },
+      AGENT,
+    )
+    await writeFile(join(dir, 'facts.md'), 'Edited by hand\n')
+    const dry = await service.applyChanges(
+      NB,
+      { operations: [{ op: 'add', kind: 'idea', text: 'A newsletter' }], dry_run: true },
+      AGENT,
+    )
+    assert.ok(!dry.warnings.some((w) => w.code === 'outside_edits'))
+    assert.match(git(dir, 'status', '--porcelain'), /facts\.md/)
+    await service.undo(NB, first.change_id!, AGENT)
+    assert.deepEqual(git(dir, 'log', '-2', '--format=%an').trim().split('\n'), [
+      'claude-desktop for Alex',
+      'outside the service',
+    ])
+    assert.equal(await readFile(join(dir, 'facts.md'), 'utf8'), 'Edited by hand\n')
+  })
+})

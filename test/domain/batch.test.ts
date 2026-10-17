@@ -255,3 +255,23 @@ describe('logs', () => {
     }
   })
 })
+
+describe('edits made outside the service (in memory)', () => {
+  it('are committed first, under their own author', async () => {
+    const { apply, store, history } = await fixtureService()
+    await store.write(NB, [{ path: 'ideas.md', content: '# Come back to\n\n- Typed by hand\n' }])
+    const r = await apply([{ op: 'add', kind: 'inbox', text: 'From the agent' }])
+    const commits = history.commitsOf(NB)
+    assert.equal(commits.length, 2)
+    assert.equal(commits[0]!.author.name, 'outside the service')
+    assert.deepEqual(
+      commits[0]!.files.map((f) => f.path),
+      ['ideas.md', `log/${TODAY}.md`],
+    )
+    assert.ok(!commits[1]!.files.some((f) => f.path === 'ideas.md'))
+    assert.equal(
+      r.warnings.find((w) => w.code === 'outside_edits')!.change_id,
+      commits[0]!.changeId,
+    )
+  })
+})

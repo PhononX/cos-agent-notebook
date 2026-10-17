@@ -114,7 +114,7 @@ practice, when duplicate items were merged and each source is kept.
 | `status`, `via`, `reads` | sources | connected or not, through what, and what the agent reads there |
 | `for` | my-rules tools, about-me writing | the kind of work: `email`, `doc`, `deck`, `slack`, `text`, `post`, `notes`, or another word |
 | `audience` | about-me writing | who it's written to: `colleagues`, `team`, `executives`, `clients`, `friends`, `family`, or another word |
-| `by` | log | who made the change: the client, and the person it acted for |
+| `by` | log | who made the change: the client and the person it acted for, or `outside the service` for edits made directly to the files |
 | `change` | log | the id of the change, for undo |
 
 Fields not in this table are allowed and kept as they are.

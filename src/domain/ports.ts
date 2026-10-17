@@ -54,6 +54,11 @@ export interface History {
     change: { changeId: string; summary: string; author: Author; paths: readonly string[] },
   ): Promise<void>
   findChange(notebook: NotebookRef, changeId: string): Promise<ChangeRecord | null>
+  /**
+   * Notes whose content differs from the last recorded change: edited, added or deleted outside
+   * the service. Paths are relative to the notebook; hidden folders are left out.
+   */
+  outsideChanges(notebook: NotebookRef): Promise<string[]>
   /** Earlier versions of the files changed by the most recent changes, newest first. */
   recentVersions(
     notebook: NotebookRef,

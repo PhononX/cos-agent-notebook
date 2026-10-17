@@ -58,7 +58,11 @@ the same JSON.
 - `status` is one of `added`, `duplicate`, `completed`, `updated`, `archived`, `moved`,
   `created`, `merged`, `promoted`, `logged`, `unchanged`.
 - Warning codes: `new_name`, `duplicate`, `likely_duplicate`, `already_done`,
-  `already_superseded`, `existing_project`, `timezone_invalid`, `dry_run`.
+  `already_superseded`, `existing_project`, `timezone_invalid`, `dry_run`, `outside_edits`.
+- `outside_edits` means notes were changed directly in the files (by hand, in Obsidian, by
+  another tool) since the last change. Before applying the call, the service recorded them as
+  their own change, authored "outside the service"; the warning carries that `change_id` and the
+  `files`. A dry run leaves outside edits alone.
 
 ## Refusals
 

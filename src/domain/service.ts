@@ -28,6 +28,7 @@ import {
   type IdempotencyStore,
   type Lock,
   type Logger,
+  type Author,
   type NotebookRef,
   type NotebookStore,
 } from './ports.ts'
@@ -151,7 +152,7 @@ export class NotebookService {
       const files = await this.commit(notebook, copy, {
         changeId,
         summary: 'Started the notebook',
-        actor,
+        by: byActor(actor),
         now,
       })
       this.logger.info('notebook_init', {
@@ -233,6 +234,7 @@ export class NotebookService {
           }
         }
 
+        const outside = req.dry_run ? null : await this.recordOutsideEdits(notebook)
         const copy = await WorkingCopy.load(this.store, notebook)
         const { timezone, warning } = this.timezoneOf(copy)
         const now = zonedNow(this.clock.now(), timezone)
@@ -257,6 +259,14 @@ export class NotebookService {
         const summary =
           summarize(descriptions) || (batch.hasChanges() ? 'Added to the daily log' : 'No changes')
         const warnings: Warning[] = warning ? [warning] : []
+        if (outside) {
+          warnings.push({
+            code: 'outside_edits',
+            message: `${outside.files.length} note${outside.files.length > 1 ? 's were' : ' was'} changed outside the service since the last change; that was recorded first, as ${outside.change_id}.`,
+            change_id: outside.change_id,
+            files: outside.files,
+          })
+        }
         const changed = copy.changes()
         let changeId: string | null = null
         let files: FileSummary[] = changed.map(fileSummary)
@@ -272,7 +282,7 @@ export class NotebookService {
           files = await this.commit(notebook, copy, {
             changeId,
             summary,
-            actor,
+            by: byActor(actor),
             now,
             logLine: descriptions.length > 0,
           })
@@ -329,6 +339,7 @@ export class NotebookService {
     }
     return this.lock.run(notebook, async () => {
       await this.requireNotebook(notebook)
+      await this.recordOutsideEdits(notebook)
       const record = await this.history.findChange(notebook, changeId)
       if (!record) {
         throw new NotebookError(
@@ -378,7 +389,12 @@ export class NotebookService {
       const now = zonedNow(this.clock.now(), this.timezoneOf(copy).timezone)
       const newId = newChangeId()
       const summary = `Undid ${changeId} (${record.summary})`
-      const files = await this.commit(notebook, copy, { changeId: newId, summary, actor, now })
+      const files = await this.commit(notebook, copy, {
+        changeId: newId,
+        summary,
+        by: byActor(actor),
+        now,
+      })
       this.logger.info('undo', {
         notebook: formatRef(notebook),
         change_id: newId,
@@ -400,6 +416,37 @@ export class NotebookService {
     }
   }
 
+  /**
+   * Records notes changed outside the service (by hand, in Obsidian, by another tool) as their
+   * own change, so the next change holds only what its caller did, and history and the daily log
+   * show everything. Runs under the notebook lock, before each write. The edits are recorded
+   * exactly as they are, even lines that don't fit the format.
+   */
+  private async recordOutsideEdits(
+    notebook: NotebookRef,
+  ): Promise<{ change_id: string; files: string[] } | null> {
+    const files = (await this.history.outsideChanges(notebook)).filter((p) => !pathProblem(p))
+    if (!files.length) return null
+    const copy = await WorkingCopy.load(this.store, notebook)
+    const now = zonedNow(this.clock.now(), this.timezoneOf(copy).timezone)
+    const shown = files.slice(0, 5).join(', ')
+    const more = files.length > 5 ? ` and ${files.length - 5} more` : ''
+    const changeId = newChangeId()
+    await this.commit(notebook, copy, {
+      changeId,
+      summary: `Edited outside the service: ${shown}${more}`,
+      by: OUTSIDE,
+      now,
+      alsoRecord: files,
+    })
+    this.logger.info('outside_edits', {
+      notebook: formatRef(notebook),
+      change_id: changeId,
+      files: files.length,
+    })
+    return { change_id: changeId, files }
+  }
+
   private timezoneOf(copy: WorkingCopy): { timezone: string; warning?: Warning } {
     const tz = frontMatterValue(copy.note('my-rules.md')?.frontMatter ?? null, 'timezone')
     if (tz === undefined) return { timezone: this.defaultTimezone }
@@ -417,7 +464,15 @@ export class NotebookService {
   private async commit(
     notebook: NotebookRef,
     copy: WorkingCopy,
-    c: { changeId: string; summary: string; actor: Actor; now: ZonedNow; logLine?: boolean },
+    c: {
+      changeId: string
+      summary: string
+      by: By
+      now: ZonedNow
+      logLine?: boolean
+      /** Files already on disk to record with this change (edits made outside the service). */
+      alsoRecord?: readonly string[]
+    },
   ): Promise<FileSummary[]> {
     if (c.logLine !== false) addLogLine(copy, c)
     const changed = copy.changes()
@@ -429,8 +484,8 @@ export class NotebookService {
       await this.history.commit(notebook, {
         changeId: c.changeId,
         summary: c.summary,
-        author: actorAuthor(c.actor),
-        paths: changed.map((f) => f.path),
+        author: c.by.author,
+        paths: [...new Set([...(c.alsoRecord ?? []), ...changed.map((f) => f.path)])],
       })
     } catch (e) {
       // All or nothing: put back what was there before.
@@ -476,13 +531,29 @@ function bestSuccessor(copy: WorkingCopy, was: Item): Candidate | null {
   return inFile ? candidate(inFile.i) : null
 }
 
+/** Who a change is recorded as: the label in the daily log, and the author in history. */
+interface By {
+  label: string
+  author: Author
+}
+
+function byActor(actor: Actor): By {
+  return { label: actorLabel(actor), author: actorAuthor(actor) }
+}
+
+/** Edits found on disk that no call made: by hand, in Obsidian, or by another tool. */
+const OUTSIDE: By = {
+  label: 'outside the service',
+  author: { name: 'outside the service', email: 'outside@cos-notebook.invalid' },
+}
+
 function addLogLine(
   copy: WorkingCopy,
-  c: { changeId: string; summary: string; actor: Actor; now: ZonedNow },
+  c: { changeId: string; summary: string; by: By; now: ZonedNow },
 ): void {
   const path = logPath(c.now.date)
   const fields = [
-    { key: 'by', value: actorLabel(c.actor) },
+    { key: 'by', value: c.by.label },
     { key: 'change', value: c.changeId },
   ]
   let line: string

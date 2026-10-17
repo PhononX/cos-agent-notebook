@@ -104,6 +104,14 @@ export class MemoryHistory implements History {
     return record
   }
 
+  async outsideChanges(notebook: NotebookRef) {
+    const key = notebookKey(notebook)
+    const last = this.commits.get(key)?.at(-1)?.snapshot ?? this.baseline.get(key) ?? new Map()
+    const now = this.store.notebooks.get(key) ?? new Map<string, string>()
+    const paths = new Set([...last.keys(), ...now.keys()])
+    return [...paths].filter((p) => last.get(p) !== now.get(p)).sort()
+  }
+
   async recentVersions(notebook: NotebookRef, changes: number) {
     const list = this.commits.get(notebookKey(notebook)) ?? []
     const out: { path: string; content: string }[] = []
