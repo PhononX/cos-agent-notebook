@@ -221,7 +221,10 @@ history: someone in two workspaces has three notebooks, one per space, kept apar
 
 ### Storage and history
 
-- One git repository per notebook. Git is the open-source version-control tool and protocol,
+- One git repository per notebook. Git is the history, not a database change log with git used
+  only for export: the folder and its `.git` are the whole notebook, so a person can walk away
+  with it, and change ids, undo, merging, outside edits, adoption, sync, retention and purge are
+  all built on it. The cost, a few git processes per write, is small for one person's notebook. Git is the open-source version-control tool and protocol,
   not GitHub; repositories live on the service's own storage. People never need to know it's
   there.
 - Use the system `git` binary. Plumbing commands are fine.
@@ -515,8 +518,6 @@ Each milestone ends with passing tests and an updated README section on how to r
 
 ## Open questions
 
-- History storage: git inside the service (current plan), or current files plus a database
-  change log, with git used only for export.
 - Retention defaults: 30 or 90 days of individual changes; how long archived items are kept.
 - Which local embedding model to use, and at what notebook size semantic search is worth
   enabling by default.
