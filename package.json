@@ -2,6 +2,7 @@
   "name": "cos-agent-notebook",
   "version": "0.1.0",
   "description": "The Chief of Staff notebook: structured, plain-Markdown memory for AI chief-of-staff agents",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "cos-notebook": "dist/cli/main.js"

@@ -138,4 +138,4 @@ interfaces in `src/domain/ports.ts`, so the same logic runs locally or hosted.
 
 ## License
 
-Not chosen yet; see the open questions in `SPEC.md`.
+MIT; see [`LICENSE`](LICENSE).

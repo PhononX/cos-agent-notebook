@@ -500,6 +500,8 @@ Hosting also needs these properties throughout the code:
   change tool shapes and descriptions. They call a model, so they run on demand, not in CI.
 - Repository and package name: `cos-agent-notebook` (published to npm, so installers can fetch
   it). The command it installs is `cos-notebook`.
+- License: MIT. The service is mostly a format and a tool other agents plug into, so the widest
+  adoption matters most; a hosted deployment competes on the value it offers, not on the license.
 - One CLI: `cos-notebook serve`, `cos-notebook mcp` (stdio), `cos-notebook sync`, `cos-notebook init`,
   `cos-notebook adopt`,
   `cos-notebook token create|list|revoke`, `cos-notebook retention run`, `cos-notebook export`.
@@ -526,7 +528,6 @@ Each milestone ends with passing tests and an updated README section on how to r
 
 - Which local embedding model to use, and at what notebook size semantic search is worth
   enabling by default.
-- License: AGPL (prevents a closed hosted copy) or MIT/Apache (wider adoption).
 - Whether a member leaving a workspace may take an export of their work notebook (a workspace
   setting?).
 - Whether workspaces will later want shared notebooks written by a whole team. Today every
