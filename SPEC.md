@@ -228,11 +228,17 @@ history: someone in two workspaces has three notebooks, one per space, kept apar
   not GitHub; repositories live on the service's own storage. People never need to know it's
   there.
 - Use the system `git` binary. Plumbing commands are fine.
-- **Retention:** a scheduled job keeps every commit from the last N days (configurable per
-  space, default 90) and collapses everything older into one starting commit:
-  1. `git rev-list -1 --before=<cutoff> main`
+- **Retention:** a scheduled job keeps every commit from the last N days and collapses
+  everything older into one starting commit. N defaults to 90 and is set per space: by the
+  person for their personal notebook, by a workspace admin for its work notebooks, and "keep
+  everything" is allowed. Undo and stale-id answers work within that window. Retention only
+  collapses old individual changes; it never removes current content, so the archive
+  (`archive/YYYY-MM.md`) is kept indefinitely, and removing archived items is always an explicit
+  act (a purge, or deleting the file, which is then recorded as an outside edit). The steps, on
+  the notebook's current branch:
+  1. `git rev-list -1 --before=<cutoff> HEAD`
   2. `git commit-tree <cutoff>^{tree}` → new parentless root
-  3. `git rebase --onto <new-root> <cutoff> main --committer-date-is-author-date`
+  3. `git rebase --onto <new-root> <cutoff> HEAD --committer-date-is-author-date`
   4. `git reflog expire --expire=now --all && git gc --prune=now`
 - **Purge:** remove a file or an item, or replace text, across all history (for example, a password
   captured by mistake), then the same cleanup as step 4.
@@ -518,7 +524,6 @@ Each milestone ends with passing tests and an updated README section on how to r
 
 ## Open questions
 
-- Retention defaults: 30 or 90 days of individual changes; how long archived items are kept.
 - Which local embedding model to use, and at what notebook size semantic search is worth
   enabling by default.
 - License: AGPL (prevents a closed hosted copy) or MIT/Apache (wider adoption).
