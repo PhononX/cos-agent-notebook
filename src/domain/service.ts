@@ -60,10 +60,30 @@ import {
   type Lock,
   type Logger,
   type Author,
+  type ChangeSummary,
   type NotebookRef,
+  type SessionStore,
   type NotebookStore,
 } from './ports.ts'
-import { parseRequest } from './request.ts'
+import {
+  FILING_RULES,
+  GetChangesInput,
+  GetItemsInput,
+  isOpen,
+  itemKind,
+  narrow,
+  page,
+  ResolveNamesInput,
+  resolveNamesIn,
+  ReviewInput,
+  reviewCandidates,
+  SearchInput,
+  searchItems,
+  selectItems,
+  StartSessionInput,
+  type LoadedNotebook,
+} from './reads.ts'
+import { parseInput, parseRequest } from './request.ts'
 import { normalize, textSimilarity } from './similarity.ts'
 import { systemTimeZone, zonedNow, type ZonedNow } from './time.ts'
 import { WorkingCopy, type FileChange } from './working-copy.ts'
@@ -77,6 +97,17 @@ export interface ServiceDeps {
   logger?: Logger
   /** The time zone for notebooks whose my-rules.md doesn't set one. */
   defaultTimezone?: string
+  /** When each client last started a session; kept in memory if left out. */
+  sessions?: SessionStore
+}
+
+/** The notebooks a client may read: its personal notebook and the work notebooks it was given. */
+export interface Access {
+  notebooks: readonly NotebookRef[]
+}
+
+export interface ListedItem extends CompactItem {
+  kind: string | null
 }
 
 export interface FileSummary {
@@ -181,6 +212,7 @@ export class NotebookService {
   private readonly clock: Clock
   private readonly logger: Logger
   private readonly defaultTimezone: string
+  private readonly sessions: SessionStore
 
   constructor(deps: ServiceDeps) {
     this.store = deps.store
@@ -190,6 +222,7 @@ export class NotebookService {
     this.clock = deps.clock ?? systemClock
     this.logger = deps.logger ?? silentLogger
     this.defaultTimezone = deps.defaultTimezone ?? systemTimeZone()
+    this.sessions = deps.sessions ?? new InMemorySessions()
   }
 
   // ---------- notebooks ----------
@@ -364,7 +397,7 @@ export class NotebookService {
 
   // ---------- reads ----------
 
-  async readNote(notebook: NotebookRef, path: string) {
+  async readNote(notebook: NotebookRef, path: string, opts: { sections?: readonly string[] } = {}) {
     checkRef(notebook)
     const problem = pathProblem(path)
     if (problem) throw new NotebookError('invalid_value', `The path "${path}" ${problem}.`)
@@ -373,7 +406,32 @@ export class NotebookService {
     if (text === null) throw new NotebookError('not_found', `There is no note ${path}.`)
     const note = parseNote(path, text)
     const sameAs = frontMatterValue(note.frontMatter, 'same_as')
+    let ranges: [number, number][] | null = null
+    if (opts.sections?.length) {
+      const want = opts.sections.map((t) =>
+        t
+          .replace(/^#+\s*/, '')
+          .trim()
+          .toLowerCase(),
+      )
+      ranges = note.headings
+        .filter((h) => want.includes(h.title.toLowerCase()))
+        .map((h) => {
+          const next = note.headings.find((n) => n.index > h.index && n.level <= h.level)
+          return [h.index, next ? next.index : note.text.length] as [number, number]
+        })
+      if (!ranges.length) {
+        const have = note.headings.map((h) => h.title).join(', ')
+        throw new NotebookError(
+          'not_found',
+          `${path} has no section named ${opts.sections.join(' or ')}. Its sections: ${have || 'none'}.`,
+        )
+      }
+    }
+    const inRange = (i: number) => ranges === null || ranges.some(([a, b]) => i >= a && i < b)
+    const lines = note.text.lines()
     return {
+      notebook: formatRef(notebook),
       path,
       type: note.type,
       front_matter: Object.fromEntries(
@@ -381,9 +439,245 @@ export class NotebookService {
       ),
       /** The same person's notes in work notebooks (person notes in a personal notebook). */
       same_as: sameAs !== undefined ? parseSameAs(sameAs).links : [],
-      items: note.items.map((i) => compactItem(i, notebook)),
-      problems: note.problems.map(({ line, message }) => ({ line, message })),
-      text,
+      items: note.items.filter((i) => inRange(i.index)).map((i) => compactItem(i, notebook)),
+      problems: note.problems
+        .filter((p) => inRange(p.line - 1))
+        .map(({ line, message }) => ({ line, message })),
+      text:
+        ranges === null ? text : ranges.map(([a, b]) => lines.slice(a, b).join('\n')).join('\n\n'),
+    }
+  }
+
+  // ---------- reads across notebooks ----------
+
+  private async loadMany(refs: readonly NotebookRef[]): Promise<LoadedNotebook[]> {
+    const out: LoadedNotebook[] = []
+    for (const ref of refs) {
+      checkRef(ref)
+      await this.requireNotebook(ref)
+      const copy = await WorkingCopy.load(this.store, ref)
+      out.push({
+        ref,
+        name: formatRef(ref),
+        copy,
+        now: zonedNow(this.clock.now(), this.timezoneOf(copy).timezone),
+      })
+    }
+    return out
+  }
+
+  /** `get_items`: items of some kinds, filtered, across the notebooks the client may read. */
+  async getItems(access: Access, input: unknown) {
+    const req = parseInput(GetItemsInput, input)
+    const nbs = await this.loadMany(narrow(access.notebooks, req.notebooks))
+    const selected = selectItems(nbs, req).map(({ nb, item }) => listed(item, nb.ref))
+    return page(selected, req)
+  }
+
+  /** `search`: notes and items containing every word of a query, best matches first. */
+  async search(access: Access, input: unknown) {
+    const req = parseInput(SearchInput, input)
+    const nbs = await this.loadMany(narrow(access.notebooks, req.notebooks))
+    return page(
+      searchItems(nbs, req).map(({ nb, item }) => listed(item, nb.ref)),
+      req,
+    )
+  }
+
+  /** `resolve_names`: the closest existing people, projects and areas for each name, in each notebook. */
+  async resolveNames(access: Access, input: unknown) {
+    const req = parseInput(ResolveNamesInput, input)
+    const nbs = await this.loadMany(narrow(access.notebooks, req.notebooks))
+    return { names: resolveNamesIn(nbs, req.names) }
+  }
+
+  /** `get_review_candidates`: overdue, stale, never-nudged, duplicate and recurring items. */
+  async reviewCandidates(access: Access, input: unknown) {
+    const req = parseInput(ReviewInput, input)
+    const refs = narrow(access.notebooks, req.notebooks)
+    const personal = access.notebooks.find((r) => r.space.kind === 'personal')
+    const staleDays = personal
+      ? (await this.profile(personal)).settings.stale_days
+      : DEFAULT_SETTINGS.stale_days
+    const nbs = await this.loadMany(refs)
+    const all = reviewCandidates(nbs, { kinds: req.kinds, staleDays })
+    const { items, total } = page(all, { limit: req.limit })
+    return {
+      stale_days: staleDays,
+      candidates: items.map((c) => ({
+        kind: c.kind,
+        reason: c.reason,
+        notebook: c.nb.name,
+        items: c.items.map((i) => listed(i, c.nb.ref)),
+      })),
+      total,
+    }
+  }
+
+  /** `get_changes`: changes since a time or a change id, newest first, with who made them. */
+  async getChanges(access: Access, input: unknown) {
+    const req = parseInput(GetChangesInput, input)
+    const refs = narrow(access.notebooks, req.notebooks)
+    const since = req.since
+    const sinceTime = since !== undefined && !CHANGE_ID.test(since) ? Date.parse(since) : null
+    if (since !== undefined && sinceTime !== null && Number.isNaN(sinceTime)) {
+      throw new NotebookError(
+        'invalid_value',
+        'since must be an ISO 8601 time, like 2026-10-17T09:00:00Z, or a change id.',
+      )
+    }
+    const all: (ChangeSummary & { notebook: string })[] = []
+    for (const ref of refs) {
+      checkRef(ref)
+      await this.requireNotebook(ref)
+      for (const c of await this.changesSince(ref, {
+        changeId: sinceTime === null ? since : undefined,
+        time: sinceTime,
+      })) {
+        all.push({ ...c, notebook: formatRef(ref) })
+      }
+    }
+    all.sort((a, b) => Date.parse(b.time) - Date.parse(a.time))
+    const result = page(all, req)
+    return {
+      changes: result.items.map((c) => ({
+        notebook: c.notebook,
+        change_id: c.changeId,
+        summary: c.summary,
+        by: c.author.name,
+        time: c.time,
+        files: c.paths,
+      })),
+      next_cursor: result.next_cursor,
+      total: result.total,
+    }
+  }
+
+  private async changesSince(
+    ref: NotebookRef,
+    since: { changeId?: string | undefined; time: number | null },
+    cap = 500,
+  ): Promise<ChangeSummary[]> {
+    const out: ChangeSummary[] = []
+    for (let offset = 0; offset < cap; offset += 100) {
+      const batch = await this.history.listChanges(ref, { limit: 100, offset })
+      for (const c of batch) {
+        if (since.changeId !== undefined && c.changeId === since.changeId) return out
+        if (since.time !== null && Date.parse(c.time) <= since.time) return out
+        out.push(c)
+      }
+      if (batch.length < 100) break
+    }
+    return out
+  }
+
+  /**
+   * `start_session`: everything an agent needs to begin, in one call: today in the right time
+   * zone, the combined profile, the filing rules, focus, reminders, counts, and what others
+   * changed since this client's last session.
+   */
+  async startSession(access: Access, input: unknown, actorIn: Actor) {
+    const actor = checkActor(actorIn)
+    const req = parseInput(StartSessionInput, input)
+    const refs = narrow(access.notebooks, req.notebooks)
+    const personal = refs.find((r) => r.space.kind === 'personal')
+    if (!personal) {
+      throw new NotebookError(
+        'invalid_value',
+        "start_session needs the person's personal notebook among the notebooks it covers.",
+      )
+    }
+    const work = refs.filter((r) => r.space.kind === 'workspace')
+    let current: NotebookRef | WorkspaceId | undefined
+    if (typeof req.workspace === 'string') {
+      const ref = work.find((w) => formatRef(w) === req.workspace)
+      if (!ref) {
+        throw new NotebookError(
+          'invalid_value',
+          `${req.workspace} isn't one of this client's work notebooks: ${work.map(formatRef).join(', ') || 'none'}.`,
+        )
+      }
+      current = ref
+    } else if (req.workspace) {
+      current = req.workspace
+    }
+    const profile = await this.profile(personal, { work, ...(current ? { current } : {}) })
+    const nbs = await this.loadMany(refs)
+    const now = zonedNow(this.clock.now(), profile.timezone)
+
+    const fromNote = (path: string, section?: string) =>
+      nbs.flatMap((nb) =>
+        (nb.copy.note(path)?.items ?? [])
+          .filter(
+            (i) => section === undefined || i.section.some((t) => t.toLowerCase() === section),
+          )
+          .map((i) => listed(i, nb.ref)),
+      )
+    const counts = nbs.map((nb) => {
+      const open = nb.copy.items().filter((i) => isOpen(i))
+      const actions = open.filter((i) => i.path === 'actions.md' && i.checked === false)
+      const due = (i: Item) => i.fields.find((f) => f.key === 'due')?.value
+      return {
+        notebook: nb.name,
+        open_actions: actions.length,
+        due_today: actions.filter((i) => due(i) === nb.now.date).length,
+        overdue: actions.filter((i) => (due(i) ?? '9999') < nb.now.date).length,
+        waiting: open.filter((i) => i.path === 'waiting.md' && i.checked === false).length,
+        inbox: open.filter((i) => i.path === 'inbox.md').length,
+      }
+    })
+
+    // What others changed since this client last started a session (the last day, the first time).
+    const nowMs = this.clock.now().getTime()
+    const last =
+      (await this.sessions.lastSession(personal, actor.client)) ?? nowMs - 24 * 60 * 60 * 1000
+    const mine = actorAuthor(actor).email
+    const others: {
+      notebook: string
+      change_id: string | null
+      summary: string
+      by: string
+      time: string
+    }[] = []
+    for (const nb of nbs) {
+      for (const c of await this.changesSince(nb.ref, { time: last }, 200)) {
+        if (c.author.email === mine) continue
+        others.push({
+          notebook: nb.name,
+          change_id: c.changeId,
+          summary: c.summary,
+          by: c.author.name,
+          time: c.time,
+        })
+      }
+    }
+    others.sort((a, b) => Date.parse(b.time) - Date.parse(a.time))
+    await this.sessions.setLastSession(personal, actor.client, nowMs)
+    this.logger.info('start_session', { notebooks: nbs.length, changes_by_others: others.length })
+
+    return {
+      today: { date: now.date, time: now.time, weekday: now.weekday, timezone: now.timezone },
+      current_workspace: profile.current,
+      profile: {
+        settings: profile.settings,
+        about_me: profile.about_me,
+        rules: profile.rules,
+        workspaces: profile.workspaces,
+      },
+      filing: {
+        rules: FILING_RULES,
+        where_things_go: profile.rules.filter((r) => r.section.toLowerCase() === 'where things go'),
+      },
+      focus: fromNote('now.md', 'focus'),
+      this_week: fromNote('now.md', 'this week'),
+      reminders: fromNote('nudges.md'),
+      counts,
+      changes_by_others: {
+        since: new Date(last).toISOString(),
+        changes: others.slice(0, 20),
+        more: others.length > 20,
+      },
+      warnings: profile.warnings,
     }
   }
 
@@ -1031,6 +1325,20 @@ function fileSummary(f: FileChange): FileSummary {
   return {
     path: f.path,
     status: f.before === null ? 'created' : f.after === null ? 'deleted' : 'changed',
+  }
+}
+
+function listed(item: Item, notebook: NotebookRef): ListedItem {
+  return { ...compactItem(item, notebook), kind: itemKind(item) }
+}
+
+class InMemorySessions implements SessionStore {
+  private readonly last = new Map<string, number>()
+  async lastSession(notebook: NotebookRef, client: string) {
+    return this.last.get(`${formatRef(notebook)}\n${client}`) ?? null
+  }
+  async setLastSession(notebook: NotebookRef, client: string, at: number) {
+    this.last.set(`${formatRef(notebook)}\n${client}`, at)
   }
 }
 

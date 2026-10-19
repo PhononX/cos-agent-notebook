@@ -10,6 +10,7 @@ import { notebookKey, personalNotebook, sameNotebook } from '../../domain/notebo
 import type { Clock, Logger, NotebookRef } from '../../domain/ports.ts'
 import { NotebookService } from '../../domain/service.ts'
 import { FileIdempotencyStore } from './file-idempotency.ts'
+import { FileSessionStore } from './file-sessions.ts'
 import { LocalNotebookStore, type DirFor } from './fs-store.ts'
 import { GitHistory } from './git-history.ts'
 import { FileLock } from './file-lock.ts'
@@ -51,6 +52,7 @@ export function createLocalService(opts: LocalOptions): NotebookService {
     history: new GitHistory(dirFor),
     lock: new FileLock(dirFor),
     idempotency: new FileIdempotencyStore(dirFor),
+    sessions: new FileSessionStore(dirFor),
     logger: opts.logger ?? new JsonLogger(),
     ...(opts.clock ? { clock: opts.clock } : {}),
     ...(opts.defaultTimezone ? { defaultTimezone: opts.defaultTimezone } : {}),

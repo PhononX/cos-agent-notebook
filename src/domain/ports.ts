@@ -45,6 +45,15 @@ export interface ChangeRecord {
   files: FileVersion[]
 }
 
+export interface ChangeSummary {
+  changeId: string | null
+  summary: string
+  author: Author
+  /** ISO 8601 */
+  time: string
+  paths: string[]
+}
+
 export interface HistoryState {
   /** History already holds changes made by this service: the folder is a notebook. */
   notebook: boolean
@@ -70,6 +79,14 @@ export interface History {
    * the service. Paths are relative to the notebook; hidden folders are left out.
    */
   outsideChanges(notebook: NotebookRef): Promise<string[]>
+  /**
+   * Changes, newest first: up to `limit`, skipping `offset`. Changes made before the notebook
+   * was a notebook (adopted history) have no change id.
+   */
+  listChanges(
+    notebook: NotebookRef,
+    opts: { limit: number; offset?: number },
+  ): Promise<ChangeSummary[]>
   /** Earlier versions of the files changed by the most recent changes, newest first. */
   recentVersions(
     notebook: NotebookRef,
@@ -94,6 +111,12 @@ export interface IdempotencyRecord {
 export interface IdempotencyStore {
   get(notebook: NotebookRef, key: string): Promise<IdempotencyRecord | null>
   put(notebook: NotebookRef, key: string, record: IdempotencyRecord): Promise<void>
+}
+
+/** When each client last started a session, so start_session can say what others changed since. */
+export interface SessionStore {
+  lastSession(notebook: NotebookRef, client: string): Promise<number | null>
+  setLastSession(notebook: NotebookRef, client: string, at: number): Promise<void>
 }
 
 export interface Clock {

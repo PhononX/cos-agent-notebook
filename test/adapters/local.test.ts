@@ -387,3 +387,22 @@ describe('write tools on disk', () => {
     )
   })
 })
+
+describe('reads on disk', () => {
+  it('list changes from git history, with change ids from the trailers', async () => {
+    const { service } = await localFixture()
+    const r = await service.applyChanges(
+      NB,
+      { operations: [{ op: 'add', kind: 'inbox', text: 'A' }] },
+      AGENT,
+    )
+    const changes = await service.getChanges({ notebooks: [NB] }, {})
+    assert.equal(changes.changes[0]!.change_id, r.change_id)
+    assert.equal(changes.changes[0]!.by, 'claude-desktop for Alex')
+    assert.deepEqual(changes.changes[0]!.files.sort(), ['inbox.md', `log/${TODAY}.md`])
+    // The fixture's own commit was made outside the service: no change id.
+    assert.equal(changes.changes.at(-1)!.change_id, null)
+    const session = await service.startSession({ notebooks: [NB] }, {}, { client: 'other-agent' })
+    assert.ok(session.changes_by_others.changes.some((c) => c.change_id === r.change_id))
+  })
+})

@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import type {
   Author,
   ChangeRecord,
+  ChangeSummary,
   History,
   HistoryState,
   NotebookRef,
@@ -204,6 +205,42 @@ export class GitHistory implements History {
       .map((entry) => entry.slice(3))
       .filter((path) => path.endsWith('.md') && !path.split('/').some((p) => p.startsWith('.')))
       .sort()
+  }
+
+  async listChanges(
+    notebook: NotebookRef,
+    opts: { limit: number; offset?: number },
+  ): Promise<ChangeSummary[]> {
+    const cwd = this.dirFor(notebook)
+    const head = await git(['rev-parse', '--verify', '-q', 'HEAD'], { cwd, allowFail: true })
+    if (head.code !== 0) return []
+    // One record per commit: a marker line, then the fields, then the paths it touched.
+    const out = await git(
+      [
+        'log',
+        `-n${opts.limit}`,
+        `--skip=${opts.offset ?? 0}`,
+        `--format=%x1e%an%x1f%ae%x1f%aI%x1f%s%x1f%(trailers:key=${TRAILER},valueonly,separator=)`,
+        '--name-only',
+        'HEAD',
+      ],
+      { cwd },
+    )
+    return out.stdout
+      .toString('utf8')
+      .split('\x1e')
+      .slice(1)
+      .map((record) => {
+        const [meta = '', ...rest] = record.split('\n')
+        const [name = '', email = '', time = '', summary = '', changeId = ''] = meta.split('\x1f')
+        return {
+          changeId: changeId.trim() || null,
+          summary,
+          author: { name, email },
+          time,
+          paths: rest.map((l) => l.trim()).filter(Boolean),
+        }
+      })
   }
 
   async recentVersions(

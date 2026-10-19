@@ -4,12 +4,14 @@
 import type {
   Author,
   ChangeRecord,
+  Clock,
   FileWrite,
   History,
   IdempotencyRecord,
   IdempotencyStore,
   NotebookRef,
   NotebookStore,
+  SessionStore,
 } from '../../domain/ports.ts'
 import { notebookKey } from '../../domain/notebook-ref.ts'
 
@@ -57,9 +59,11 @@ export class MemoryHistory implements History {
   readonly commits = new Map<string, MemoryCommit[]>()
   private readonly baseline = new Map<string, Map<string, string>>()
   private readonly store: MemoryStore
+  private readonly clock: Clock
 
-  constructor(store: MemoryStore) {
+  constructor(store: MemoryStore, clock: Clock = { now: () => new Date() }) {
     this.store = store
+    this.clock = clock
   }
 
   commitsOf(notebook: NotebookRef): ChangeRecord[] {
@@ -87,7 +91,7 @@ export class MemoryHistory implements History {
       changeId: change.changeId,
       summary: change.summary,
       author: change.author,
-      time: new Date().toISOString(),
+      time: this.clock.now().toISOString(),
       files: change.paths.map((path) => ({
         path,
         before: prev.get(path) ?? null,
@@ -121,6 +125,17 @@ export class MemoryHistory implements History {
     return [...paths].filter((p) => last.get(p) !== now.get(p)).sort()
   }
 
+  async listChanges(notebook: NotebookRef, opts: { limit: number; offset?: number }) {
+    const list = [...(this.commits.get(notebookKey(notebook)) ?? [])].reverse()
+    return list.slice(opts.offset ?? 0, (opts.offset ?? 0) + opts.limit).map((c) => ({
+      changeId: c.changeId,
+      summary: c.summary,
+      author: c.author,
+      time: c.time,
+      paths: c.files.map((f) => f.path),
+    }))
+  }
+
   async recentVersions(notebook: NotebookRef, changes: number) {
     const list = this.commits.get(notebookKey(notebook)) ?? []
     const out: { path: string; content: string }[] = []
@@ -138,6 +153,17 @@ export class MemoryHistory implements History {
 }
 
 export { InProcessLock as MemoryLock } from '../local/lock.ts'
+
+export class MemorySessions implements SessionStore {
+  private readonly last = new Map<string, number>()
+
+  async lastSession(notebook: NotebookRef, client: string) {
+    return this.last.get(`${notebookKey(notebook)}\n${client}`) ?? null
+  }
+  async setLastSession(notebook: NotebookRef, client: string, at: number) {
+    this.last.set(`${notebookKey(notebook)}\n${client}`, at)
+  }
+}
 
 export class MemoryIdempotency implements IdempotencyStore {
   private readonly records = new Map<string, IdempotencyRecord>()

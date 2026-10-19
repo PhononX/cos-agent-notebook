@@ -2,6 +2,7 @@ import {
   MemoryHistory,
   MemoryIdempotency,
   MemoryLock,
+  MemorySessions,
   MemoryStore,
 } from '../../src/adapters/memory/index.ts'
 import type { Actor } from '../../src/domain/actor.ts'
@@ -30,16 +31,17 @@ export class CaptureLogger implements Logger {
 }
 
 /** A service over an in-memory copy of the fixture notebook, with a fixed clock. */
-export async function fixtureService(opts: { now?: Date } = {}) {
+export async function fixtureService(opts: { now?: Date; clock?: { now(): Date } } = {}) {
   const store = new MemoryStore()
-  const history = new MemoryHistory(store)
+  const clock = opts.clock ?? { now: () => opts.now ?? NOW }
+  const history = new MemoryHistory(store, clock)
   const logger = new CaptureLogger()
-  const clock = { now: () => opts.now ?? NOW }
   const service = new NotebookService({
     store,
     history,
     lock: new MemoryLock(),
     idempotency: new MemoryIdempotency(),
+    sessions: new MemorySessions(),
     clock,
     logger,
     defaultTimezone: 'UTC',
