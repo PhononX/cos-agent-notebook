@@ -367,3 +367,23 @@ describe('edits made outside the service', () => {
     assert.equal(await readFile(join(dir, 'facts.md'), 'utf8'), 'Edited by hand\n')
   })
 })
+
+describe('write tools on disk', () => {
+  it('commit a draft version together with its kept earlier version', async () => {
+    const { dir, service } = await localFixture()
+    await service.saveDraft(
+      NB,
+      { name: 'Board narrative', draft: 'Shorter.', change: 'shorter' },
+      AGENT,
+    )
+    assert.deepEqual(
+      git(dir, 'show', '--name-only', '--format=', 'HEAD').trim().split('\n').sort(),
+      ['drafts/.history/Board narrative/v2.md', 'drafts/Board narrative.md', `log/${TODAY}.md`],
+    )
+    assert.equal(git(dir, 'status', '--porcelain'), '')
+    assert.equal(
+      await readFile(join(dir, 'drafts', '.history', 'Board narrative', 'v2.md'), 'utf8'),
+      fixtureNotes().get('drafts/Board narrative.md'),
+    )
+  })
+})

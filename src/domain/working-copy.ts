@@ -14,6 +14,7 @@ export interface FileChange {
 export class WorkingCopy {
   private readonly notes = new Map<string, Note>()
   private readonly original = new Map<string, string | null>()
+  private readonly files = new Map<string, string>()
   private itemCache: Item[] | null = null
 
   static async load(store: NotebookStore, notebook: NotebookRef): Promise<WorkingCopy> {
@@ -85,11 +86,20 @@ export class WorkingCopy {
     }
   }
 
+  /**
+   * Writes a file that isn't a note (draft history under drafts/.history/). It isn't parsed or
+   * read as items; it is written and recorded with the change.
+   */
+  writeFile(path: string, text: string): void {
+    if (!this.original.has(path)) this.original.set(path, null)
+    this.files.set(path, text)
+  }
+
   changes(): FileChange[] {
     const out: FileChange[] = []
     for (const [path, before] of this.original) {
       const note = this.notes.get(path)
-      const after = note ? note.text.toString() : null
+      const after = note ? note.text.toString() : (this.files.get(path) ?? null)
       if (after !== before) out.push({ path, before, after })
     }
     return out.sort((a, b) => a.path.localeCompare(b.path))

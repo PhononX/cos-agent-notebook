@@ -87,13 +87,13 @@ export async function runOperation(b: Batch, op: Operation): Promise<void> {
 
 // ---------- shared pieces ----------
 
-interface Links {
+export interface Links {
   person?: string | string[] | undefined
   project?: string | undefined
   area?: string | undefined
 }
 
-function linkTargets(b: Batch, o: Links): LinkTarget[] {
+export function linkTargets(b: Batch, o: Links): LinkTarget[] {
   const out: LinkTarget[] = []
   const people = o.person === undefined ? [] : Array.isArray(o.person) ? o.person : [o.person]
   for (const p of people) out.push({ name: b.resolveName(p, 'person'), type: 'person' })
@@ -129,11 +129,11 @@ function checkExtraField(key: string, value: string | number): Field {
   return { key, value: v }
 }
 
-function quoteLines(quote: string[], indent = '  '): string[] {
+export function quoteLines(quote: string[], indent = '  '): string[] {
   return quote.map((q) => (q ? `${indent}> ${q}` : `${indent}>`))
 }
 
-function rawQuoteLines(b: Batch, item: Item): string[] {
+export function rawQuoteLines(b: Batch, item: Item): string[] {
   return b.copy
     .note(item.path)!
     .text.lines()
@@ -141,7 +141,7 @@ function rawQuoteLines(b: Batch, item: Item): string[] {
 }
 
 /** An item line in its existing form, with some parts changed. */
-function rerender(
+export function rerender(
   item: Item,
   change: { checked?: boolean | null; text?: string; fields?: Field[]; top?: boolean },
   label = 'item',
@@ -158,7 +158,7 @@ function rerender(
   )
 }
 
-function requireFitting(item: Item, b: Batch): void {
+export function requireFitting(item: Item, b: Batch): void {
   const problem = b.copy.note(item.path)!.problems.find((p) => p.line === item.index + 1)
   if (problem) {
     throw new NotebookError(
@@ -169,19 +169,19 @@ function requireFitting(item: Item, b: Batch): void {
   }
 }
 
-const notInArchiveOrLog = (i: Item): string | null =>
+export const notInArchiveOrLog = (i: Item): string | null =>
   ARCHIVE_PATH.test(i.path)
     ? 'is in the archive, which keeps items as they were archived'
     : LOG_PATH.test(i.path)
       ? "is a daily log line; the log isn't edited"
       : null
 
-const notADecision = (i: Item): string | null =>
+export const notADecision = (i: Item): string | null =>
   i.path === 'decisions.md'
     ? 'is a decision; past decisions aren\'t edited or moved. Record a new one with decide and "supersedes"'
     : null
 
-const either =
+export const either =
   (...checks: ((i: Item) => string | null)[]) =>
   (i: Item): string | null => {
     for (const c of checks) {
@@ -191,7 +191,7 @@ const either =
     return null
   }
 
-function linePrefixDate(text: string): { date: string | null; rest: string } {
+export function linePrefixDate(text: string): { date: string | null; rest: string } {
   const m = /^(\d{4}-\d{2}-\d{2})\s+(.*)$/.exec(text)
   return m ? { date: m[1]!, rest: m[2]! } : { date: null, rest: text }
 }
@@ -202,7 +202,7 @@ function leadingPerson(text: string): string | null {
 }
 
 /** An entry for a note, focus line or suggestion: a sentence with names linked, and its src. */
-function composeEntry(
+export function composeEntry(
   b: Batch,
   entry: Entry,
   opts: { src: boolean; label: string },
@@ -221,7 +221,7 @@ function composeEntry(
   return { line, lines: [line, ...quoteLines(quote)] }
 }
 
-function checkTargetPath(b: Batch, path: string, opts: { allowCreate: boolean }): void {
+export function checkTargetPath(b: Batch, path: string, opts: { allowCreate: boolean }): void {
   const problem = pathProblem(path)
   if (problem) throw new NotebookError('invalid_value', `The file "${path}" ${problem}.`)
   if (path === 'brief.md')
@@ -245,7 +245,7 @@ function checkTargetPath(b: Batch, path: string, opts: { allowCreate: boolean })
   }
 }
 
-function archiveItem(b: Batch, item: Item, why: string): string {
+export function archiveItem(b: Batch, item: Item, why: string): string {
   const quotes = rawQuoteLines(b, item)
   b.removeItem(item)
   let fields = removeField(item.fields, 'why')
@@ -610,7 +610,7 @@ async function decide(b: Batch, op: OperationOf<'decide'>): Promise<void> {
 
 // ---------- note ----------
 
-function frontMatterValues(
+export function frontMatterValues(
   b: Batch,
   type: string,
   values: Record<string, string | number | null>,

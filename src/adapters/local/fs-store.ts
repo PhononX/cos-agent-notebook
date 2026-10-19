@@ -4,7 +4,7 @@
 import { randomBytes } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
-import { pathProblem } from '../../format/layout.ts'
+import { isDraftHistoryPath, pathProblem } from '../../format/layout.ts'
 import type { FileWrite, NotebookRef, NotebookStore } from '../../domain/ports.ts'
 
 export type DirFor = (notebook: NotebookRef) => string
@@ -78,7 +78,7 @@ export class LocalNotebookStore implements NotebookStore {
 
   /** The file for a note path, refusing anything outside the notebook. */
   private resolve(notebook: NotebookRef, path: string): string {
-    const problem = pathProblem(path)
+    const problem = isDraftHistoryPath(path) ? null : pathProblem(path)
     if (problem) throw new Error(`Refused a path that ${problem}`)
     const root = resolve(this.dirFor(notebook))
     const full = resolve(root, ...path.split('/'))

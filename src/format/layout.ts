@@ -103,6 +103,16 @@ export function pathProblem(path: string): string | null {
   return null
 }
 
+/** A draft's earlier version: `drafts/.history/<Name>/v<N>.md`. Hidden, but written by the service. */
+export function isDraftHistoryPath(path: string): boolean {
+  const m = /^drafts\/\.history\/([^/]+)\/v[1-9]\d{0,5}\.md$/.exec(path)
+  return !!m && nameProblem(m[1]!) === null
+}
+
+export function draftHistoryPath(name: string, version: number): string {
+  return `drafts/.history/${name}/v${version}.md`
+}
+
 /** The note a link like `[[Dana Whitfield]]` resolves to, if one exists in `paths`. */
 export function resolveLink(name: string, paths: Iterable<string>): string | null {
   for (const p of paths) if (noteName(p) === name) return p

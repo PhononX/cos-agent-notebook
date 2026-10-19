@@ -6,6 +6,7 @@ import { frontMatterValue } from '../format/front-matter.ts'
 import {
   ARCHIVE_PATH,
   LOG_PATH,
+  isDraftHistoryPath,
   newNoteLines,
   PERSONAL_ONLY_FILES,
   noteName,
@@ -214,6 +215,29 @@ export class Batch {
     const initial = lines ?? newNoteLines(path, this.notebook.space.kind)
     this.record(path, [], [...initial])
     return this.copy.create(path, initial)
+  }
+
+  /** Replaces a whole note (brief.md starting a new day), or creates it. */
+  replaceNote(path: string, lines: readonly string[]): void {
+    const existing = this.copy.note(path)
+    if (!existing) {
+      this.ensureNote(path, lines)
+      return
+    }
+    const removed = this.copy.splice(path, 0, existing.text.length, lines)
+    this.record(path, removed, [...lines])
+  }
+
+  /** Records a section replaced by direct edits (brief and draft sections). */
+  replacedSection(path: string, before: readonly string[], after: readonly string[]): void {
+    this.record(path, [...before], [...after])
+  }
+
+  /** Writes a file that isn't a note: a draft's earlier version in drafts/.history/. */
+  writeHistoryFile(path: string, text: string): void {
+    if (!isDraftHistoryPath(path)) throw new Error(`${path} isn't a draft history path`)
+    this.copy.writeFile(path, text)
+    this.record(path, [], [`(earlier version kept as ${path})`])
   }
 
   insert(path: string, index: number, lines: readonly string[]): void {

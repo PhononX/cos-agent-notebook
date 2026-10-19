@@ -4,14 +4,14 @@
 import { z } from 'zod'
 import { NotebookError } from './errors.ts'
 
-const text = z.string()
-const names = z.union([z.string(), z.array(z.string()).min(1).max(10)])
-const date = z.string().describe('YYYY-MM-DD')
-const quote = z.union([z.string(), z.array(z.string()).max(20)])
+export const text = z.string()
+export const names = z.union([z.string(), z.array(z.string()).min(1).max(10)])
+export const date = z.string().describe('YYYY-MM-DD')
+export const quote = z.union([z.string(), z.array(z.string()).max(20)])
 const fieldValues = z.record(z.string(), z.union([z.string(), z.number()]))
 const fieldChanges = z.record(z.string(), z.union([z.string(), z.number(), z.null()]))
 
-const target = {
+export const target = {
   id: z.string().optional().describe('The item id from a read'),
   match: z.string().optional().describe('A phrase from the item, when there is no id'),
   file: z.string().optional().describe('Limit `match` to one note, like actions.md'),
@@ -22,7 +22,7 @@ export type Target = z.infer<typeof Target>
 
 const kind = z.enum(['action', 'waiting', 'idea', 'link', 'fact', 'decision', 'inbox', 'catch_up'])
 
-const links = {
+export const links = {
   person: names.optional(),
   project: z.string().optional(),
   area: z.string().optional(),
@@ -77,7 +77,7 @@ const DecideOp = z.strictObject({
   supersedes: Target.optional(),
 })
 
-const Entry = z.union([
+export const Entry = z.union([
   z.string(),
   z.strictObject({ text, ...links, src: z.string().optional(), quote: quote.optional() }),
 ])
@@ -168,7 +168,12 @@ export const ApplyChangesRequest = z.strictObject({
 export type ApplyChangesRequest = z.infer<typeof ApplyChangesRequest>
 
 export function parseRequest(input: unknown): ApplyChangesRequest {
-  const parsed = ApplyChangesRequest.safeParse(input)
+  return parseInput(ApplyChangesRequest, input)
+}
+
+/** Parses a tool's input, or refuses it with the first problem and how to fix it. */
+export function parseInput<T extends z.ZodType>(schema: T, input: unknown): z.infer<T> {
+  const parsed = schema.safeParse(input)
   if (parsed.success) return parsed.data
   const issue = parsed.error.issues[0]!
   const where = describePath(issue.path)

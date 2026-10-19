@@ -40,7 +40,17 @@ import { cleanName, renderChecked } from './compose.ts'
 import { NotebookError } from './errors.ts'
 import { setFrontMatterLines } from './front-matter-edit.ts'
 import { checkRef, formatRef, sameNotebook } from './notebook-ref.ts'
-import { runOperation } from './operations.ts'
+import {
+  ClearNudgesInput,
+  parseToolInput,
+  runAnyOperation,
+  SaveDraftInput,
+  UpdateCatchUpInput,
+  WriteBriefInput,
+  type AnyOperation,
+  type ToolOperation,
+  type ToolSchema,
+} from './tool-operations.ts'
 import {
   silentLogger,
   systemClock,
@@ -577,12 +587,82 @@ export class NotebookService {
     input: unknown,
     actorIn: Actor,
   ): Promise<ApplyChangesResult> {
-    const started = Date.now()
     checkRef(notebook)
     const actor = checkActor(actorIn)
-    const req = parseRequest(input)
+    return this.runBatch(notebook, actor, 'apply_changes', parseRequest(input))
+  }
+
+  /** Starts or adds to today's brief (`write_brief`). */
+  async writeBrief(
+    notebook: NotebookRef,
+    input: unknown,
+    actor: Actor,
+  ): Promise<ApplyChangesResult> {
+    return this.runTool(notebook, actor, 'write_brief', WriteBriefInput, input)
+  }
+
+  /** Adds, raises or closes catch-up lines by thread link (`update_catch_up`). */
+  async updateCatchUp(
+    notebook: NotebookRef,
+    input: unknown,
+    actor: Actor,
+  ): Promise<ApplyChangesResult> {
+    return this.runTool(notebook, actor, 'update_catch_up', UpdateCatchUpInput, input)
+  }
+
+  /** Saves a new version of a draft, keeping the previous one (`save_draft`). */
+  async saveDraft(
+    notebook: NotebookRef,
+    input: unknown,
+    actor: Actor,
+  ): Promise<ApplyChangesResult> {
+    return this.runTool(notebook, actor, 'save_draft', SaveDraftInput, input)
+  }
+
+  /** Removes reminders once they've been raised (`clear_nudges`). */
+  async clearNudges(
+    notebook: NotebookRef,
+    input: unknown,
+    actor: Actor,
+  ): Promise<ApplyChangesResult> {
+    return this.runTool(notebook, actor, 'clear_nudges', ClearNudgesInput, input)
+  }
+
+  private runTool(
+    notebook: NotebookRef,
+    actorIn: Actor,
+    tool: ToolOperation['op'],
+    schema: ToolSchema,
+    input: unknown,
+  ): Promise<ApplyChangesResult> {
+    checkRef(notebook)
+    const actor = checkActor(actorIn)
+    const { idempotency_key, dry_run, ...fields } = parseToolInput(schema, input, tool)
+    return this.runBatch(notebook, actor, tool, {
+      operations: [{ op: tool, ...fields } as ToolOperation],
+      ...(idempotency_key !== undefined ? { idempotency_key } : {}),
+      ...(dry_run !== undefined ? { dry_run } : {}),
+    })
+  }
+
+  /**
+   * Runs a list of operations on one notebook as one change: under the lock, all or nothing, with
+   * idempotency, dry run, the daily log line and one history entry. Every write tool goes here.
+   */
+  private async runBatch(
+    notebook: NotebookRef,
+    actor: Actor,
+    tool: string,
+    req: {
+      operations: AnyOperation[]
+      idempotency_key?: string | undefined
+      dry_run?: boolean | undefined
+      confirm_new_names?: string[] | undefined
+    },
+  ): Promise<ApplyChangesResult> {
+    const started = Date.now()
     const { idempotency_key: key, ...rest } = req
-    const requestHash = hashRequest({ ...rest, client: actor.client })
+    const requestHash = hashRequest({ ...rest, tool, client: actor.client })
     try {
       return await this.lock.run(notebook, async () => {
         await this.requireNotebook(notebook)
@@ -595,7 +675,7 @@ export class NotebookService {
                 'This idempotency_key was already used for a different request. Use a new key for a new request.',
               )
             }
-            this.logger.info('apply_changes_replayed', { notebook: formatRef(notebook) })
+            this.logger.info(`${tool}_replayed`, { notebook: formatRef(notebook) })
             return { ...(prior.result as ApplyChangesResult), replayed: true }
           }
         }
@@ -615,7 +695,7 @@ export class NotebookService {
         for (const [i, op] of req.operations.entries()) {
           batch.begin(i, op.op)
           try {
-            await runOperation(batch, op)
+            await runAnyOperation(batch, op)
           } catch (e) {
             if (e instanceof NotebookError) e.operation = i
             throw e
@@ -667,7 +747,7 @@ export class NotebookService {
         if (key && !req.dry_run) {
           await this.idempotency.put(notebook, key, { requestHash, result, at: Date.now() })
         }
-        this.logger.info('apply_changes', {
+        this.logger.info(tool, {
           notebook: formatRef(notebook),
           operations: req.operations.length,
           files: files.length,
@@ -679,13 +759,13 @@ export class NotebookService {
       })
     } catch (e) {
       if (e instanceof NotebookError) {
-        this.logger.info('apply_changes_refused', {
+        this.logger.info(`${tool}_refused`, {
           notebook: formatRef(notebook),
           code: e.code,
           operation: e.operation,
         })
       } else {
-        this.logger.error('apply_changes_failed', {
+        this.logger.error(`${tool}_failed`, {
           notebook: formatRef(notebook),
           error: errorName(e),
         })
