@@ -19,7 +19,8 @@ thinking; the service keeps the structure, the rules and the history.
 
 ## Status
 
-Milestones 1 and 2 of 7 are done.
+Milestone 1 of 7 is done. Milestone 2 is built and tested; it is done once the agent evaluations
+have been run against a model (`npm run eval`) and their results acted on.
 
 **Milestone 1, format and domain core:**
 
