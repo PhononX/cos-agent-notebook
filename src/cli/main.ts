@@ -2,27 +2,33 @@
 // The cos-notebook command.
 
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import type { AddressInfo } from 'node:net'
+import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
+import { ensureTokenFile, StaticTokenAuth, type Principal } from '../adapters/http/auth.ts'
+import { createHttpServer, LOCAL_HOSTS } from '../adapters/http/server.ts'
 import { createLocalService, JsonLogger, LOCAL_NOTEBOOK } from '../adapters/local/index.ts'
-import { loadConfig } from '../config.ts'
+import { mcpHttpHandler, serveStdio } from '../adapters/mcp/transports.ts'
+import { loadConfig, type Config } from '../config.ts'
 import { NotebookError } from '../domain/errors.ts'
+import type { NotebookService } from '../domain/service.ts'
 
 const HELP = `cos-notebook: the Chief of Staff notebook service
 
 Usage:
   cos-notebook init [folder] [--timezone <zone>]   Start a notebook (default folder: $COS_NOTEBOOK_DIR or ~/cos-notebook)
   cos-notebook adopt [folder] [--timezone <zone>]  Make a notebook of a folder that already has notes, as they are
+  cos-notebook serve [folder] [--port <n>] [--host <address>]
+                                                  Serve the HTTP API at /v1 and MCP at /mcp (default 127.0.0.1:4317)
+  cos-notebook mcp [folder]                       Serve MCP over stdio, for an agent that starts the server itself
   cos-notebook --version                          Print the version
   cos-notebook --help                             Show this help
 
-Coming in later milestones: serve, mcp, sync, token, retention, export.
+Coming in later milestones: sync, token, retention, export.
 Settings are environment variables; see docs/configuration.md.
 `
 
 const LATER: Record<string, string> = {
-  serve: 'the local service (milestone 2)',
-  mcp: 'MCP over stdio (milestone 2)',
   token: 'notebook tokens (milestone 6)',
   sync: 'the sync engine (milestone 5)',
   retention: 'history retention (milestone 5)',
@@ -100,6 +106,114 @@ async function adopt(args: string[]): Promise<number> {
   return 0
 }
 
+/** The local service for one folder, refusing a folder that holds no notebook yet. */
+async function openNotebook(dir: string, config: Config): Promise<NotebookService> {
+  const service = createLocalService({
+    dir,
+    defaultTimezone: config.timezone,
+    logger: new JsonLogger({ quiet: config.logLevel === 'warn' }),
+  })
+  if (!(await service.listNotes(LOCAL_NOTEBOOK)).length) {
+    throw new NotebookError(
+      'not_a_notebook',
+      `${dir} has no notebook yet. Start one with cos-notebook init ${dir}, or make one of existing notes with cos-notebook adopt ${dir}.`,
+    )
+  }
+  return service
+}
+
+function localPrincipal(config: Config): Principal {
+  return {
+    access: { notebooks: [LOCAL_NOTEBOOK] },
+    ...(config.person ? { person: config.person } : {}),
+  }
+}
+
+const SERVE_HELP = `Usage: cos-notebook serve [folder] [--port <n>] [--host <address>]
+
+Serves the notebook in [folder] (default: $COS_NOTEBOOK_DIR or ~/cos-notebook):
+the HTTP API under /v1 and MCP over Streamable HTTP at /mcp. Every request needs
+the local token, kept in .cos-notebook/token in the notebook folder (created the
+first time, readable only by you): send it as "Authorization: Bearer <token>".
+Listens on 127.0.0.1:4317 unless --host, --port or the environment say otherwise;
+requests must name an allowed host (see docs/configuration.md).`
+
+async function serve(args: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args,
+    options: {
+      port: { type: 'string' },
+      host: { type: 'string' },
+      help: { type: 'boolean', short: 'h' },
+    },
+    allowPositionals: true,
+  })
+  if (values.help) {
+    console.log(SERVE_HELP)
+    return 0
+  }
+  if (positionals.length > 1) throw new UsageError('serve takes at most one folder.')
+  const config = loadConfig({
+    ...process.env,
+    ...(values.port !== undefined ? { COS_NOTEBOOK_PORT: values.port } : {}),
+    ...(values.host !== undefined ? { COS_NOTEBOOK_HOST: values.host } : {}),
+  })
+  const dir = positionals[0] ? resolve(positionals[0]) : config.dir
+  const service = await openNotebook(dir, config)
+  const tokenFile = config.tokenFile ?? join(dir, '.cos-notebook', 'token')
+  const token = await ensureTokenFile(tokenFile)
+  const logger = new JsonLogger({ quiet: config.logLevel === 'warn' })
+  const server = createHttpServer({
+    service,
+    auth: new StaticTokenAuth(token, localPrincipal(config)),
+    logger,
+    allowedHosts: [...LOCAL_HOSTS, ...config.allowedHosts],
+    mcp: mcpHttpHandler({ service, version: version() }),
+  })
+  await new Promise<void>((ok, fail) => {
+    server.once('error', fail)
+    server.listen(config.port, config.host, () => ok())
+  })
+  const { port } = server.address() as AddressInfo
+  const shown = config.host.includes(':') ? `[${config.host}]` : config.host
+  console.log(`Serving ${dir} at http://${shown}:${port} (HTTP API under /v1, MCP at /mcp).`)
+  console.log(`Token: ${tokenFile}`)
+  if (!LOCAL_HOSTS.includes(config.host)) {
+    console.log(
+      `Listening on ${config.host}, not only this computer: anyone who can reach it and has the token can read and change the notebook.`,
+    )
+  }
+  await new Promise<void>((done) => {
+    const stop = () => {
+      server.close(() => done())
+      server.closeAllConnections()
+    }
+    process.once('SIGINT', stop)
+    process.once('SIGTERM', stop)
+  })
+  return 0
+}
+
+async function mcp(args: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args,
+    options: { help: { type: 'boolean', short: 'h' } },
+    allowPositionals: true,
+  })
+  if (values.help) {
+    console.log(
+      'Usage: cos-notebook mcp [folder]\n\nServes MCP over stdio for the notebook in [folder] (default: $COS_NOTEBOOK_DIR or ~/cos-notebook). Add it to an agent as a local MCP server with this command. Logs go to stderr.',
+    )
+    return 0
+  }
+  if (positionals.length > 1) throw new UsageError('mcp takes at most one folder.')
+  const config = loadConfig()
+  const dir = positionals[0] ? resolve(positionals[0]) : config.dir
+  const service = await openNotebook(dir, config)
+  await serveStdio({ service, principal: localPrincipal(config), version: version() })
+  return 0
+}
+
 class UsageError extends Error {}
 
 async function main(argv: string[]): Promise<number> {
@@ -114,6 +228,8 @@ async function main(argv: string[]): Promise<number> {
   }
   if (command === 'init') return init(rest)
   if (command === 'adopt') return adopt(rest)
+  if (command === 'serve') return serve(rest)
+  if (command === 'mcp') return mcp(rest)
   if (LATER[command]) {
     console.error(`cos-notebook ${command} isn't available yet: it comes with ${LATER[command]}.`)
     return 2
