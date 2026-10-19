@@ -448,6 +448,19 @@ export class NotebookService {
     }
   }
 
+  /** The notes in one notebook, for the dashboard and clients that browse. */
+  async listNotes(
+    notebook: NotebookRef,
+  ): Promise<{ path: string; type: string; name: string | null }[]> {
+    checkRef(notebook)
+    await this.requireNotebook(notebook)
+    return (await this.store.list(notebook)).map((path) => ({
+      path,
+      type: noteType(path),
+      name: noteName(path),
+    }))
+  }
+
   // ---------- reads across notebooks ----------
 
   private async loadMany(refs: readonly NotebookRef[]): Promise<LoadedNotebook[]> {
