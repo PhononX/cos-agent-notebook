@@ -48,6 +48,9 @@ change it when the design changes.
 - No agent behavior: when to capture, how to brief, how to speak. That lives in agent plugins
   that call this service.
 - No integration with any specific identity provider. Authentication is generic (see Auth).
+- No shared team notebooks, for now. Every notebook belongs to one person; a team's shared
+  record usually lives in other tools, which each person's notebook points to. The naming leaves
+  room to add them later (`workspace:northwind:team-sales`).
 
 ## Concepts
 
@@ -534,5 +537,3 @@ Each milestone ends with passing tests and an updated README section on how to r
 
 - Which local embedding model to use, and at what notebook size semantic search is worth
   enabling by default.
-- Whether workspaces will later want shared notebooks written by a whole team. Today every
-  notebook is one person's.
