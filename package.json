@@ -24,6 +24,7 @@
     "test": "node --test \"test/**/*.test.ts\"",
     "check": "npm run typecheck && npm run lint && npm test",
     "cli": "node src/cli/main.ts",
+    "eval": "node evals/run.ts",
     "prepublishOnly": "npm run check && npm run build"
   },
   "repository": {
@@ -31,6 +32,7 @@
     "url": "git+https://github.com/PhononX/cos-agent-notebook.git"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.20.5",
     "eslint": "^10.13.0",

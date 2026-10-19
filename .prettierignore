@@ -3,3 +3,4 @@ node_modules/
 test/fixtures/
 package-lock.json
 *.md
+evals/results/

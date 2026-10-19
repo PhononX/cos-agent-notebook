@@ -337,7 +337,8 @@ official MCP TypeScript SDK.
 
 Every read tool except `read_note` covers all the notebooks the client may read, as one view,
 with each result labelled by its notebook; `notebooks` narrows it. `read_note` reads one note of
-one notebook. Every write tool names one notebook.
+one notebook. Every write tool names one notebook; a client granted only one notebook may leave
+the name out, and a client granted several is refused until it names one.
 
 | Tool | Purpose |
 | --- | --- |
@@ -507,6 +508,9 @@ Hosting also needs these properties throughout the code:
   Measure tool calls per exchange, refused calls, duplicates created, items filed in the wrong
   place and tokens read. Run them before each milestone is called done, and use the results to
   change tool shapes and descriptions. They call a model, so they run on demand, not in CI.
+  Each scenario also lists the calls a good agent would make, and CI replays those without a
+  model, so a scenario whose checks can't pass, or whose ideal calls the service refuses, is
+  caught before anyone spends a model run on it.
 - Repository and package name: `cos-agent-notebook` (published to npm, so installers can fetch
   it). The command it installs is `cos-notebook`.
 - License: MIT. The service is mostly a format and a tool other agents plug into, so the widest
