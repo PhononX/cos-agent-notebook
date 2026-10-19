@@ -121,7 +121,11 @@ history: someone in two workspaces has three notebooks, one per space, kept apar
   can read or change it. No workspace token, admin or job ever reaches it.
 - **The workspace controls its work notebooks.** The member reads and writes theirs day to day.
   Workspace admins set retention, and can export or delete a work notebook. A work notebook stays
-  with the workspace when the member leaves, and the member loses access to it.
+  with the workspace when the member leaves, and the member loses access to it. A member can't
+  export their work notebook unless the workspace allows it: `member_export` is a workspace
+  setting, off by default, that only workspace admins change (on for a small company or a
+  freelancer's own business, say). Nothing of the person's is lost by leaving, because what is
+  theirs already lives in their personal notebook (`docs/spaces.md`).
 - **Mistakes in a work notebook are the workspace's to purge.** If something personal is filed
   in a work notebook, the member can archive or correct it like any item, but only a workspace
   admin can purge it from history, as with personal mail sent to a work address. A member who
@@ -393,7 +397,9 @@ authoritative.
 
 ### Export
 
-`GET /v1/notebooks/<ref>/export` returns a zip of the Markdown files (no git metadata).
+`GET /v1/notebooks/<ref>/export` returns a zip of the Markdown files (no git metadata). For a
+work notebook, only workspace admins can export, unless the workspace's `member_export` setting
+allows the member to.
 
 ### Dashboard
 
@@ -528,7 +534,5 @@ Each milestone ends with passing tests and an updated README section on how to r
 
 - Which local embedding model to use, and at what notebook size semantic search is worth
   enabling by default.
-- Whether a member leaving a workspace may take an export of their work notebook (a workspace
-  setting?).
 - Whether workspaces will later want shared notebooks written by a whole team. Today every
   notebook is one person's.

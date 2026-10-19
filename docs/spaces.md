@@ -84,6 +84,13 @@ it can be just a name and a `same_as` pointer to their note in each work noteboo
 with what comes in outside work. What's learned at work goes into the work note. Links live only in
 the personal notebook, so no workspace learns about the person's other spaces.
 
+## Leaving a workspace
+
+A work notebook stays with the workspace. By default the member can't take an export of it when
+they leave; a workspace admin can allow that (`member_export`), for example in a small company or
+a freelancer's own business. Nothing of the person's is lost, because what's theirs is already in
+their personal notebook. That's one more reason to file personal things there from the start.
+
 ## Mistakes
 
 Something personal filed in a work notebook stays in that workspace's history until a workspace
