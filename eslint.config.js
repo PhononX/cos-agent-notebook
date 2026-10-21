@@ -20,7 +20,7 @@ export default tseslint.config(
     rules: { 'no-regex-spaces': 'off' },
   },
   {
-    files: ['src/cli/**/*.ts', 'evals/run.ts', 'eslint.config.js'],
+    files: ['src/cli/**/*.ts', 'evals/run.ts', 'evals/manual.ts', 'eslint.config.js'],
     rules: { 'no-console': 'off' },
   },
 )

@@ -13,7 +13,8 @@ says what belongs in personal and workspace notebooks.
 - `npm run cli -- init /tmp/nb` runs the CLI from source; `serve` and `mcp` run the local
   service (`docs/configuration.md`).
 - `npm run eval` runs the agent evaluations against the Claude API (on demand, costs money);
-  `npm run eval -- --ideal` replays the scenarios' ideal calls for free. See `evals/README.md`.
+  `npm run eval -- --ideal` replays the scenarios' ideal calls for free. `/run-evals` (or
+  `npm run eval:manual`) runs them by hand with any MCP client as the agent. See `evals/README.md`.
 
 ## Layout and conventions
 

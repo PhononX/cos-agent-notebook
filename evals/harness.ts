@@ -76,7 +76,7 @@ export interface Metrics {
 export interface ScenarioResult {
   scenario: string
   passed: boolean
-  checks: { name: string; kind: string; passed: boolean; detail?: string }[]
+  checks: CheckResult[]
   overBudget: string[]
   metrics: Metrics
   exchanges: ExchangeRecord[]
@@ -85,7 +85,7 @@ export interface ScenarioResult {
   error?: string
 }
 
-const WRITE_TOOLS = new Set([
+export const WRITE_TOOLS = new Set([
   'apply_changes',
   'write_brief',
   'update_catch_up',
@@ -202,17 +202,7 @@ export async function runScenario(scenario: Scenario, opts: RunOptions): Promise
     await client.close()
   }
 
-  const view = viewOf(service, access)
-  const checks = []
-  for (const check of scenario.checks) {
-    const r = await check.test(view)
-    checks.push({
-      name: check.name,
-      kind: check.kind,
-      passed: r === true,
-      ...(r === true ? {} : { detail: r }),
-    })
-  }
+  const checks = await grade(scenario, viewOf(service, access))
   const after = await snapshot(service, access)
   const calls = exchanges.flatMap((e) => e.calls)
   const metrics: Metrics = {
@@ -287,7 +277,28 @@ async function callTool(
   }
 }
 
-function viewOf(service: NotebookService, access: Access): View {
+export interface CheckResult {
+  name: string
+  kind: string
+  passed: boolean
+  detail?: string
+}
+
+export async function grade(scenario: Scenario, view: View): Promise<CheckResult[]> {
+  const out: CheckResult[] = []
+  for (const check of scenario.checks) {
+    const r = await check.test(view)
+    out.push({
+      name: check.name,
+      kind: check.kind,
+      passed: r === true,
+      ...(r === true ? {} : { detail: r }),
+    })
+  }
+  return out
+}
+
+export function viewOf(service: NotebookService, access: Access): View {
   return {
     async items(space, filter = {}) {
       const r = (await service.getItems(access, {
@@ -304,32 +315,32 @@ function viewOf(service: NotebookService, access: Access): View {
   }
 }
 
-interface Snapshot {
+/** What duplicates are measured against: plain data, so a hand run can save it to a file. */
+export interface Snapshot {
   duplicates: number
-  names: Map<string, string[]>
+  names: Record<string, string[]>
 }
 
 const NAMED = /^(people|projects|areas)\/(.+)\.md$/
 
-async function snapshot(service: NotebookService, access: Access): Promise<Snapshot> {
+export async function snapshot(service: NotebookService, access: Access): Promise<Snapshot> {
   const review = (await service.reviewCandidates(access, { kinds: ['duplicate'], limit: 200 })) as {
     total: number
   }
-  const names = new Map<string, string[]>()
+  const names: Record<string, string[]> = {}
   for (const ref of access.notebooks) {
-    const list = (await service.listNotes(ref))
+    names[formatRef(ref)] = (await service.listNotes(ref))
       .map((n) => NAMED.exec(n.path)?.[2])
       .filter((n): n is string => n !== undefined)
-    names.set(formatRef(ref), list)
   }
   return { duplicates: review.total, names }
 }
 
 /** New duplicate items, plus new notes whose name is close to a note that was already there. */
-function duplicatesCreated(before: Snapshot, after: Snapshot): number {
+export function duplicatesCreated(before: Snapshot, after: Snapshot): number {
   let n = Math.max(0, after.duplicates - before.duplicates)
-  for (const [ref, names] of after.names) {
-    const old = before.names.get(ref) ?? []
+  for (const [ref, names] of Object.entries(after.names)) {
+    const old = before.names[ref] ?? []
     for (const name of names) {
       if (old.includes(name)) continue
       if (old.some((o) => scoreName(name, o) >= 0.8)) n++

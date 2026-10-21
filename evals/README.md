@@ -21,6 +21,26 @@ Northwind work notebook) with the clock fixed at 10:05 on Saturday 2026-10-17 in
 agent gets a two-line system prompt, the server's instructions and the tool descriptions, and
 nothing else.
 
+## By hand, without an API key
+
+Any MCP client can be the agent instead: a Claude Code or Claude Desktop conversation, on your
+own Claude account. In Claude Code, run `/run-evals` in this repository and it walks you through
+it. Underneath:
+
+```sh
+npm run eval:manual -- list                  # the scenarios
+npm run eval:manual -- setup misheard-name   # fresh notebooks, an mcp.json, the lines to say
+cd /tmp/cos-notebook-eval/agent && claude --mcp-config ../mcp.json --strict-mcp-config
+npm run eval:manual -- check                 # grade it
+```
+
+(The folder is the system temp folder's `cos-notebook-eval`; setup prints it.) Run the agent
+from the empty `agent` folder so it sees only the notebook tools, not this repository, and start
+a new conversation for each scenario. The eval server logs each tool call's name, refusal code
+and result size, never what was said, so `check` can count calls; it counts them per scenario,
+not per exchange. These runs use the client's own system prompt and tools, so they measure the
+notebook inside a full client, not the bare tool descriptions that `npm run eval` measures.
+
 ## What is measured
 
 | Measure | Meaning |

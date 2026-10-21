@@ -25,6 +25,7 @@
     "check": "npm run typecheck && npm run lint && npm test",
     "cli": "node src/cli/main.ts",
     "eval": "node evals/run.ts",
+    "eval:manual": "node evals/manual.ts",
     "prepublishOnly": "npm run check && npm run build"
   },
   "repository": {
